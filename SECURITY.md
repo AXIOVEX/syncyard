@@ -20,12 +20,12 @@ with a version bump and a `CHANGELOG.md` entry.
 
 ## The security model
 
-Sallyport is a **public** repository whose workflows run on the
+Syncyard is a **public** repository whose workflows run on the
 operator's **own machines** through self-hosted GitHub Actions runners.
 That combination is a known hazard class: on a typical public project,
 anyone can open a pull request — and if a workflow that runs on a
 self-hosted runner can be triggered by pull request activity, untrusted
-code executes on the operator's hardware. Sallyport's design removes
+code executes on the operator's hardware. Syncyard's design removes
 that trigger surface. These rules are load-bearing:
 
 1. **Dispatch only.** Every workflow that binds self-hosted runners
@@ -70,7 +70,7 @@ that trigger surface. These rules are load-bearing:
   code to the runners. Write access *is* the authorization boundary;
   grant it accordingly.
 - Jobs run with the operator account's permissions on the runner
-  machine. Sallyport does not sandbox job scripts; dispatch only code
+  machine. Syncyard does not sandbox job scripts; dispatch only code
   you trust, from people you trust.
 - The frozen emergency admin path the operator keeps outside this
   repository is out of scope for this policy and carries no job

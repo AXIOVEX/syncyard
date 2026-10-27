@@ -1,12 +1,12 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Sallyport logo" width="180">
+  <img src="assets/logo.png" alt="Syncyard logo" width="180">
 </p>
 
-# Sallyport
+# Syncyard
 
-**Gated dispatch to your own machines: self-hosted runner lanes plus an API-budget gatekeeper for agent workflows.**
+**Synchronized, gated dispatch to your own machines: self-hosted CPU/GPU runner lanes plus an API-budget gatekeeper for agent workflows.**
 
-A sally port is the small, controlled gate in a fortress wall — opened only for authorized sorties, never left ajar. Sallyport gives a fleet of AI agents and automation programs that kind of gate into your own computers: every job passes one checkpoint, is counted against a shared budget, and travels a lane sized for it.
+A marshalling yard sorts work onto parallel tracks so everything moves in order instead of colliding. Syncyard does that for a fleet of AI agents and automation programs running jobs on your own computers: independent CPU and GPU runners stay synchronized through one checkpoint, every job is counted against a shared API budget, and each job travels a lane sized for it.
 
 ## Why it exists
 
@@ -15,7 +15,7 @@ When several programs share one GitHub account and a few personal machines, two 
 1. **The GitHub API budget.** The account-wide quota is 5,000 REST calls per hour. A morning of many programs dispatching and polling their own jobs at once can exhaust it — and when it is gone, every program stops, including the ones that behaved. (This happened on the founding deployment, on day one; the census is summarized in [docs/STANDARD.md](docs/STANDARD.md).)
 2. **The runner queue.** A self-hosted runner executes one job at a time. On a single shared runner, a two-minute status probe can wait over an hour behind a long render.
 
-Sallyport fixes the ordering and the spending, not the machines:
+Syncyard fixes the ordering and the spending, not the machines:
 
 - A **gatekeeper** is the only door. Programs submit job requests to it; it checks API headroom before dispatching, refuses duplicates, assigns lanes, and watches every run in one batched sweep.
 - **Lanes** split the runners by job shape, so quick checks never stand behind long renders.
@@ -42,11 +42,11 @@ Sallyport fixes the ordering and the spending, not the machines:
                                                        +------------------------+
 ```
 
-Outside this flow, the operator keeps a separate, frozen emergency admin path for the rare case where the Actions route itself is the thing that is broken. It carries no job traffic; Sallyport is the only door for work.
+Outside this flow, the operator keeps a separate, frozen emergency admin path for the rare case where the Actions route itself is the thing that is broken. It carries no job traffic; Syncyard is the only door for work.
 
 ## Security model
 
-A public repository with self-hosted runners is a known hazard class: if untrusted code can trigger a workflow, it can run on your machines. Sallyport's design removes that trigger surface, and the rules below are load-bearing — pull requests that weaken them will not be merged.
+A public repository with self-hosted runners is a known hazard class: if untrusted code can trigger a workflow, it can run on your machines. Syncyard's design removes that trigger surface, and the rules below are load-bearing — pull requests that weaken them will not be merged.
 
 - **Dispatch only.** The runner workflows (`run`, `wsl`, `grab`) bind self-hosted runners and are triggered **only** by `workflow_dispatch`. Dispatching a workflow requires write access to this repository, so only trusted collaborators can start a job.
 - **Never** bind a self-hosted runner to `pull_request`, `pull_request_target`, `issues`, or any other event that untrusted users can cause. Not in this repository, not in a fork you deploy.
@@ -61,7 +61,7 @@ More detail, including how to report a vulnerability, is in [SECURITY.md](SECURI
 **1. Register a runner** on a Windows machine you own, signed in as the user the jobs should run as. Fetch a registration token (valid about an hour), then run the setup script once per lane:
 
 ```powershell
-gh api -X POST repos/AXIOVEX/sallyport/actions/runners/registration-token --jq .token
+gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .token
 .\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\actions-runner-quick" -RegistrationToken <token> -Start
 ```
 
@@ -116,7 +116,7 @@ The full standard is [docs/STANDARD.md](docs/STANDARD.md).
 
 ## Versioning
 
-Sallyport uses [Semantic Versioning](https://semver.org). Every change lands as a repository update with a version bump per semver and an entry in [CHANGELOG.md](CHANGELOG.md) (kept in [Keep a Changelog](https://keepachangelog.com) format). When behavior and the fleet disagree in the field, the fix lands here first, with a new revision — this repository is the canonical published source, and operator copies track its releases.
+Syncyard uses [Semantic Versioning](https://semver.org). Every change lands as a repository update with a version bump per semver and an entry in [CHANGELOG.md](CHANGELOG.md) (kept in [Keep a Changelog](https://keepachangelog.com) format). When behavior and the fleet disagree in the field, the fix lands here first, with a new revision — this repository is the canonical published source, and operator copies track its releases.
 
 ## License
 

@@ -1,4 +1,4 @@
-# Sallyport CI - GitHub-HOSTED runners only, always.
+# Syncyard CI - GitHub-HOSTED runners only, always.
 # This workflow must never run on the self-hosted fleet (see SECURITY.md).
 name: CI
 

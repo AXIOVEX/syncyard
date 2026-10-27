@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: A capability Sallyport should have
+about: A capability Syncyard should have
 title: "[feature] "
 labels: enhancement
 ---
@@ -16,7 +16,7 @@ labels: enhancement
 
 ## Cost check
 
-<!-- Sallyport work is judged against two budgets: the shared GitHub API
+<!-- Syncyard work is judged against two budgets: the shared GitHub API
      quota (5,000 calls/hour, account-wide) and the runner queue. Say
      what this would cost each, if anything. -->
 

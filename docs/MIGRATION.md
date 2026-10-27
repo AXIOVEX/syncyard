@@ -1,8 +1,8 @@
 # Migration and cutover plan
 
-How an existing, working setup moves into Sallyport without breaking
+How an existing, working setup moves into Syncyard without breaking
 the door it walks through. This document records the founding fleet's
-cutover; operators adopting Sallyport over a similar setup can follow
+cutover; operators adopting Syncyard over a similar setup can follow
 the same gates.
 
 ## Starting point

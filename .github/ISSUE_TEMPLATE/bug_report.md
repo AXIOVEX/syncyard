@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in Sallyport behaves wrong
+about: Something in Syncyard behaves wrong
 title: "[bug] "
 labels: bug
 ---
@@ -12,7 +12,7 @@ labels: bug
 ## Where
 
 - Component: gatekeeper / runner workflow (run, wsl, grab) / setup script / watchdog / client / docs
-- Sallyport version (from the `VERSION` file or the release):
+- Syncyard version (from the `VERSION` file or the release):
 - Machine and lane, if a dispatch was involved:
 
 ## Evidence

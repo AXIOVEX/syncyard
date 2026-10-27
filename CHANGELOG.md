@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Project renamed from Sallyport to Syncyard. The repository is now
+  `AXIOVEX/syncyard`; GitHub redirects the previous repository URL.
+  Documentation, the agent skill, workflow and client repository
+  constants, setup defaults, templates, and release metadata now use
+  the Syncyard name.
+- README now describes the project in terms of synchronized runner
+  lanes: a marshalling yard for CPU and GPU jobs dispatched through
+  GitHub Actions.
+- The version stays at 0.1.1 for now, by owner decision: no version
+  bump until the project is fully landed, passes full CI, and has
+  served as the fleet's daily driver for a few days.
+
 ## [0.1.1] - 2026-10-27
 
 ### Fixed
@@ -21,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Project scaffold: README with the architecture, security model,
-  quickstart, and lane table; the Sallyport logo
+  quickstart, and lane table; the project logo
   (`assets/logo.png` — a fortress gate with a raised portcullis and a
   dispatch arrow passing through).
 - `SKILL.md`, the agent operating skill: gatekeeper commands, lane

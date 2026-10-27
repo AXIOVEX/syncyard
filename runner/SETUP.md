@@ -52,7 +52,7 @@ Registration tokens **expire in about an hour**, and steps 2–4 are one
 sitting for exactly that reason. From the control machine:
 
 ```bash
-gh api -X POST repos/AXIOVEX/sallyport/actions/runners/registration-token --jq .token
+gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .token
 ```
 
 Keep the value in the terminal only. If it expires mid-session, fetch
@@ -80,7 +80,7 @@ the expected resting state).
 Confirm all four show as **online** (one API call):
 
 ```bash
-gh api repos/AXIOVEX/sallyport/actions/runners --jq '.runners[] | "\(.name) \(.status) labels=\([.labels[].name] | join(","))"'
+gh api repos/AXIOVEX/syncyard/actions/runners --jq '.runners[] | "\(.name) \(.status) labels=\([.labels[].name] | join(","))"'
 ```
 
 ## Step 4 — Install the runner watchdog
