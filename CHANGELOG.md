@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-27
+
+### Fixed
+
+- Clients: the run-discovery polling loop used an unused loop variable
+  (`for i in $(seq ...)`), which failed the ShellCheck CI step
+  (SC2034). The loops now use the conventional throwaway variable;
+  behavior is unchanged. Caught by the first CI run of the scaffold.
+
 ## [0.1.0] - 2026-10-27
 
 ### Added

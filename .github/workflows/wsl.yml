@@ -1,4 +1,4 @@
-# Sallyport wsl workflow - version 0.1.0
+# Sallyport wsl workflow - version 0.1.1
 # Part of AXIOVEX/sallyport. Dispatch-only by design: this workflow binds
 # self-hosted runners and must NEVER be triggered by pull_request,
 # pull_request_target, issues, or any other unprivileged event.

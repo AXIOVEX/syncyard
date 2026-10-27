@@ -19,7 +19,7 @@ B64=$(printf '%s' "$CMD" | base64 -w0)
 BEFORE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 gh workflow run wsl.yml -R "$REPO" -f cmd_b64="$B64" -f cwd="$CWD" || exit 1
 ID=""
-for i in $(seq 1 40); do
+for _ in $(seq 1 40); do
   ID=$(gh run list -R "$REPO" --workflow wsl.yml -L 3 --json databaseId,createdAt \
         --jq "[.[] | select(.createdAt >= \"$BEFORE\")] | first | .databaseId // empty" 2>/dev/null)
   [ -n "$ID" ] && break

@@ -1,4 +1,4 @@
-# setup-runner.ps1 - Sallyport runner setup (version 0.1.0)
+# setup-runner.ps1 - Sallyport runner setup (version 0.1.1)
 #
 # Downloads the GitHub Actions runner package, registers ONE runner
 # against the Sallyport repository, and (with -Start) launches it as a
