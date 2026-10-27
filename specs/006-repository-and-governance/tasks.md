@@ -19,8 +19,11 @@
   1.0.10 in a scratch project and copied in selectively — the
   ratified constitution and init-options were not overwritten;
   copilot skills landed under .github/skills/).
-- [ ] T007 — Land the polish pull request (logo set, community
+- [x] T007 — Land the polish pull request (logo set, community
   docs, badges, gatekeeper status/logging/spec changes); CI green.
+  (Merged 2026-10-27 as PR #4, merge commit 56464493, under the
+  owner's one-time protection pause; protection verified identical
+  to the pre-pause snapshot after restore.)
 - [x] T008 — Owner decisions (2026-10-27): license = Apache-2.0
   (LICENSE replaced, README updated); merge path = the one-time
   protection pause, ratified as the standing path.

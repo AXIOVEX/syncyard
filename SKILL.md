@@ -74,6 +74,15 @@ $GK start
 # purge with an age filter. --ledger also archives the ledger.
 $GK purge --older-than-days 7
 $GK purge --older-than-days 7 --yes
+
+# Push notifications: add --notify-chat <chat-id> to any submit or
+# adopt and the coordinator is told when the run starts (with its
+# expected length), completes (with the marker verdict), or
+# escalates — programs register once and never poll. The outbox
+# lists the pushes owed, grouped by chat; --ack advances past them
+# once they have been delivered.
+$GK outbox
+$GK outbox --ack
 ```
 
 - Every job carries a **unique `--key`**. Submitting a key that is already
@@ -118,6 +127,16 @@ $GK purge --older-than-days 7 --yes
   `--ledger` also archives `ledger.jsonl` and starts a fresh one.
   Records hold harvested markers and log tails, so age-filtered
   purges are the norm.
+- **Push notifications** (`--notify-chat` on submit/adopt;
+  `gk outbox`) replace polling: a registered job produces a push
+  when its run starts (with the job's expected length), completes
+  (conclusion plus verdict highlights from the harvested markers),
+  or escalates at a W2 watermark. The sweep's outbox prints the
+  pushes owed, grouped by chat, from the append-only ledger —
+  history from before the mechanism existed is never replayed —
+  and the cursor advances (`outbox --ack`) only after the
+  coordinator has delivered them into the named chats. Pushes ride
+  the existing sweep cadence; there is no server to run.
 
 ## Lane routing
 
