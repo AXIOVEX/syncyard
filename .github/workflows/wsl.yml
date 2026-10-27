@@ -1,0 +1,36 @@
+# Sallyport wsl workflow - version 0.1.0
+# Part of AXIOVEX/sallyport. Dispatch-only by design: this workflow binds
+# self-hosted runners and must NEVER be triggered by pull_request,
+# pull_request_target, issues, or any other unprivileged event.
+# See SECURITY.md - the security model depends on it.
+name: wsl
+
+on:
+  workflow_dispatch:
+    inputs:
+      cmd_b64:
+        description: "Base64-encoded bash script to execute inside WSL2 (Ubuntu) on TRISTEN-DESKTOP"
+        required: true
+      cwd:
+        description: "WSL working directory"
+        required: false
+        default: '/home/tpierson'
+
+jobs:
+  wsl:
+    runs-on: [self-hosted, Windows, X64, desktop, gpu]
+    timeout-minutes: 360
+    steps:
+      - name: Execute-WSL
+        shell: pwsh
+        env:
+          CMD_B64: ${{ inputs.cmd_b64 }}
+          WSL_CWD: ${{ inputs.cwd }}
+        run: |
+          $script = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CMD_B64))
+          $f = Join-Path $env:RUNNER_TEMP 'job.sh'
+          [IO.File]::WriteAllText($f, ($script -replace "`r`n","`n"))
+          # Manual Windows->WSL path conversion (wslpath strips backslashes via pwsh arg passing)
+          $wslPath = '/mnt/' + $f.Substring(0,1).ToLower() + ($f.Substring(2) -replace '\\','/')
+          & wsl.exe -- bash -lc "cd '$env:WSL_CWD' && bash '$wslPath'"
+          exit $LASTEXITCODE

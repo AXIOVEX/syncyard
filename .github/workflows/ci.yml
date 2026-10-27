@@ -1,0 +1,90 @@
+# Sallyport CI - GitHub-HOSTED runners only, always.
+# This workflow must never run on the self-hosted fleet (see SECURITY.md).
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Python syntax check (gatekeeper)
+        run: python3 -m py_compile gatekeeper/gk.py
+
+      - name: Gatekeeper offline smoke test
+        run: |
+          set -e
+          tmp="$(mktemp -d)"
+          cp -r gatekeeper "$tmp/"
+          printf 'Write-Output "SMOKE_TICK"\n' > "$tmp/smoke.ps1"
+          cd "$tmp/gatekeeper"
+          python3 gk.py submit --program smoke --workflow run.yml --lane quick \
+              --script "$tmp/smoke.ps1" --cwd 'C:\smoke' --key smoke-key
+          if python3 gk.py submit --program smoke --workflow run.yml --lane quick \
+              --script "$tmp/smoke.ps1" --cwd 'C:\smoke' --key smoke-key; then
+            echo "ERROR: duplicate submit was not refused"; exit 1
+          else
+            rc=$?; [ "$rc" -eq 3 ] || { echo "ERROR: duplicate submit rc=$rc, want 3"; exit 1; }
+          fi
+          python3 gk.py adopt --run-id 123 --program smoke --workflow run.yml \
+              --lane quick --key adopt-key
+          python3 gk.py status
+          python3 gk.py cancel smoke-key
+          echo "SMOKE OK"
+
+      - name: ShellCheck (clients)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+          shellcheck clients/*.sh
+
+      - name: PowerShell parse check (runner scripts)
+        shell: pwsh
+        run: |
+          $bad = 0
+          Get-ChildItem -Path runner -Filter *.ps1 -Recurse | ForEach-Object {
+            $errs = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$null, [ref]$errs)
+            if ($errs -and $errs.Count -gt 0) {
+              Write-Host "PARSE ERRORS in $($_.FullName):"
+              $errs | ForEach-Object { Write-Host "  $($_.Message)" }
+              $bad = 1
+            } else {
+              Write-Host "parse OK: $($_.Name)"
+            }
+          }
+          if ($bad) { exit 1 }
+
+      - name: Changelog has an entry for VERSION
+        run: |
+          ver="$(tr -d '[:space:]' < VERSION)"
+          echo "VERSION=$ver"
+          grep -q "^## \[$ver\]" CHANGELOG.md || { echo "ERROR: CHANGELOG.md has no entry for $ver"; exit 1; }
+
+      - name: Security guard - no self-hosted runner on unprivileged triggers
+        run: |
+          # Strip full-line comments. A workflow is forbidden when an actual
+          # runs-on line names self-hosted AND a trigger key an unprivileged
+          # user can cause is present. (Inspecting runs-on lines only keeps
+          # this guard from flagging its own script text in this file.)
+          fail=0
+          for f in .github/workflows/*.yml runner/workflows/*.yml; do
+            body="$(grep -v '^[[:space:]]*#' "$f")"
+            if printf '%s' "$body" | grep -E '^[[:space:]]*runs-on:' | grep -q 'self-hosted' && \
+               printf '%s' "$body" | grep -Eq '^[[:space:]]*(pull_request|pull_request_target|issues|issue_comment)[[:space:]]*:|on:[[:space:]]*\[[^]]*(pull_request|issues)'; then
+              echo "FORBIDDEN: $f binds self-hosted runners to an unprivileged trigger"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "security guard OK"
+          exit $fail

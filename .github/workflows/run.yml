@@ -1,0 +1,35 @@
+# Sallyport run workflow - version 0.1.0
+# Part of AXIOVEX/sallyport. Dispatch-only by design: this workflow binds
+# self-hosted runners and must NEVER be triggered by pull_request,
+# pull_request_target, issues, or any other unprivileged event.
+# See SECURITY.md - the security model depends on it.
+name: run
+
+on:
+  workflow_dispatch:
+    inputs:
+      cmd_b64:
+        description: "Base64-encoded PowerShell script to execute on TRISTEN-DESKTOP"
+        required: true
+      cwd:
+        description: "Working directory"
+        required: false
+        default: 'C:\Users\trist'
+
+jobs:
+  run:
+    runs-on: [self-hosted, Windows, X64, desktop, gpu]
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Execute
+        shell: pwsh
+        working-directory: ${{ inputs.cwd }}
+        env:
+          CMD_B64: ${{ inputs.cmd_b64 }}
+        run: |
+          $script = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:CMD_B64))
+          $f = Join-Path $env:RUNNER_TEMP 'job.ps1'
+          Set-Content -Path $f -Value $script -Encoding UTF8
+          & pwsh -NoProfile -ExecutionPolicy Bypass -File $f
+          exit $LASTEXITCODE

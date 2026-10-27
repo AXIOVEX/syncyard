@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Gatekeeper operator state (exists only in a live copy)
+gatekeeper/queue/
+gatekeeper/ledger.jsonl
+gatekeeper/sweep.log
+gatekeeper/.sweep.lock/
