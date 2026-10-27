@@ -16,6 +16,16 @@ through the gatekeeper.
 Repository: `AXIOVEX/syncyard`. The live gatekeeper copy runs on the
 operator's control machine and tracks this repository's releases.
 
+## Keeping this skill current (standing rule)
+
+**This file is updated in the same change as any change to behavior,
+commands, lanes, workflows, or operations.** A change that leaves
+this skill stale is incomplete. The project is governed by spec-kit
++ AEE: a constitution (`.specify/memory/constitution.md`) and
+numbered specs under `specs/`, each requirement a claim with
+evidence and a falsification test. Changes cite the spec they
+implement; behavior with no spec gets a spec in the same change.
+
 ## Commands
 
 ```bash
@@ -39,8 +49,31 @@ $GK submit --program <your-program> --workflow grab.yml \
 $GK adopt --run-id <id> --program <your-program> --workflow <wf> \
     --lane <lane> --key <unique-key>
 
-# The board: every tracked job, its state, flags, and verdict markers
+# The board: every tracked job, its state, flags, and verdict markers,
+# plus queued/running counts and an ISSUES section (see below)
 $GK status
+
+# The board + project-repo health: latest CI, open Dependabot alerts
+# and PRs (three API calls; the default status above is local-only)
+$GK status --repo
+
+# Hold ALL program dispatch (the watch pass keeps running, so verdicts
+# and watermarks stay current; jobs already dispatched are untouched —
+# the gatekeeper never cancels). Operator maintenance jobs submitted
+# with --maintenance still dispatch during a pause.
+$GK pause --reason "WSL cleanup + compact"
+$GK resume
+
+# The hard halt: sweeps no-op entirely (no budget spent, no watch)
+# until started again. Start clears both a stop and a pause.
+$GK stop --reason "fleet maintenance"
+$GK start
+
+# Housekeeping: remove terminal (completed/cancelled) job records.
+# Dry-run unless --yes; job records carry the harvested evidence, so
+# purge with an age filter. --ledger also archives the ledger.
+$GK purge --older-than-days 7
+$GK purge --older-than-days 7 --yes
 ```
 
 - Every job carries a **unique `--key`**. Submitting a key that is already
@@ -52,6 +85,39 @@ $GK status
 - `gk cancel <id-or-key>` is local bookkeeping for jobs that were never
   dispatched. It never cancels a GitHub run. There is no command in this
   system that cancels a running job on a timer — see escalation below.
+- The status board's **ISSUES** section is the operator's problem
+  list: watermark breaches and escalations, log harvests that failed
+  or are still pending, a dispatch stuck needing a human, and
+  completions with no marker verdict. Read it before concluding the
+  fleet is healthy.
+- **Logging is two-layered**: `ledger.jsonl` (append-only JSON, one
+  record per event — the machine record) and `gatekeeper.log` (one
+  human-readable line per sweep, rotating at 1 MB). At completion the
+  sweep harvests a run's log once; if the CLI read fails it falls
+  back to the REST logs archive and records which source supplied
+  the log.
+- A **daily health check** reviews the board, the ledger's errors,
+  CI on main, and Dependabot. Green Dependabot patch/minor bumps of
+  GitHub Actions are merged by the check; major bumps are reported
+  to the operator, never merged.
+- **Pause** (`gk pause` / `gk resume`) holds dispatch of program
+  jobs while the operator works on the machines themselves. Status
+  shows the pause banner with its reason; sweeps print PAUSED.
+  Maintenance submissions (`submit --maintenance`) bypass the pause,
+  the active cap, and lane serialization — never the duplicate
+  check. Use maintenance only for operator work on the fleet itself
+  (cleanup, repair, inventory), never for program jobs.
+- **Stop and start** (`gk stop` / `gk start`) are the hard lifecycle
+  controls: while stopped, a sweep returns immediately — no API
+  budget spent, no watch pass, no dispatch — and status shows the
+  STOPPED banner. `start` clears both a stop and a pause. Neither
+  state ever touches jobs already dispatched.
+- **Purge** (`gk purge`) removes terminal (completed/cancelled) job
+  records — dry-run unless `--yes` is passed. `--older-than-days N`
+  restricts it to records created more than N days ago;
+  `--ledger` also archives `ledger.jsonl` and starts a fresh one.
+  Records hold harvested markers and log tails, so age-filtered
+  purges are the norm.
 
 ## Lane routing
 

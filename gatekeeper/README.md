@@ -52,6 +52,11 @@ python3 gk.py adopt  --run-id ID --program NAME --workflow WF \
 python3 gk.py sweep
 python3 gk.py status
 python3 gk.py cancel <job-id-or-key>     # local only, pre-dispatch jobs
+python3 gk.py pause [--reason TEXT]    # hold program dispatch; watch continues
+python3 gk.py resume                   # clear a pause
+python3 gk.py stop [--reason TEXT]     # hard halt: sweeps no-op until start
+python3 gk.py start                    # clear stop + pause: fully running
+python3 gk.py purge [--older-than-days N] [--ledger] [--yes]  # dry-run default
 ```
 
 - **submit** writes a job file in state `submitted` and records the
@@ -100,12 +105,36 @@ python3 gk.py cancel <job-id-or-key>     # local only, pre-dispatch jobs
      owner, per Part 4.
   5. Prints exactly one summary line, for example
      `SWEEP 2026-10-27T15:21:57Z budget_remaining=4297 dispatched=0 changes=6 breaches=12 active=6 waiting=1`
-- **status** prints the board: counts by state, all live jobs with lane
-  / run status / flags, completed jobs with marker counts, and the last
-  10 ledger events.
+- **status** prints the board: counts by state, queued/running counts,
+  all live jobs with lane / run status / flags, completed jobs with
+  marker counts, an ISSUES section (watermark breaches, failed or
+  pending log harvests, completions without a marker verdict), and the
+  last 10 ledger events. `status --repo` adds project-repo health:
+  latest CI runs, open Dependabot alerts, and open Dependabot pull
+  requests (three API calls; the default status is local-only).
+- **Logging** is two-layered: the append-only JSON ledger
+  (`ledger.jsonl`, one record per event — the machine record) and a
+  human-readable rotating log (`gatekeeper.log`, one line per sweep,
+  1 MB with one backup). Log harvest tries `gh run view --log` first
+  and falls back to the REST logs archive, recording which source
+  supplied the log.
 - **cancel** retires a job that has not been dispatched yet (local
   state only). It refuses for dispatched jobs and never cancels a
   GitHub run.
+- **Lifecycle control** — `pause` holds dispatch of program jobs (the
+  watch pass keeps running; jobs submitted with `--maintenance` still
+  dispatch, bypassing the pause, the active cap, and lane
+  serialization but never the duplicate check); `resume` clears a
+  pause. `stop` is the hard halt: a sweep returns immediately — no
+  budget spent, no watch, no dispatch — until `start` clears both
+  stop and pause. `status` shows the control state in a banner.
+  `purge` removes terminal (completed/cancelled) job records, dry-run
+  unless `--yes`; `--older-than-days N` restricts it to records
+  created more than N days ago, and `--ledger` also archives
+  `ledger.jsonl` to a timestamped file and starts a fresh one. Job
+  records carry the harvested markers and log tails — they are the
+  evidence trail — so purge with an age filter is the norm, not the
+  exception.
 
 One platform caveat, observed in the field: GitHub's run-level status
 for a run can lag or sit at `queued` while the job's log already holds
