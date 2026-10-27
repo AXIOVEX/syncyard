@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-27
-
 ### Changed
 
 - Project renamed from Sallyport to Syncyard. The repository is now
@@ -19,6 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - README now describes the project in terms of synchronized runner
   lanes: a marshalling yard for CPU and GPU jobs dispatched through
   GitHub Actions.
+- The version stays at 0.1.1 for now, by owner decision: no version
+  bump until the project is fully landed, passes full CI, and has
+  served as the fleet's daily driver for a few days.
 
 ## [0.1.1] - 2026-10-27
 
