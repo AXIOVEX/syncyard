@@ -7,8 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- New project logo: a marshalling-yard mark (three lanes converging through
+  one gate) as `assets/logo.svg`, with rendered `assets/logo.png` and
+  `assets/social-preview.png` alongside it. Replaces the previous emblem.
+- `CONTRIBUTING.md` (development setup, the self-hosted security invariant
+  for contributions, review and changelog discipline) and
+  `CODE_OF_CONDUCT.md` (Contributor Covenant 2.1).
+- README badges for CI status and the latest release.
+- `gk.py status` now leads with queued/running counts and an ISSUES
+  section (watermark breaches, failed or pending log harvests, stale
+  dispatches, completions without a marker verdict), and takes a
+  `--repo` flag that adds project-repo health: latest CI runs, open
+  Dependabot alerts, and open Dependabot pull requests.
+- A daily health check reviews the status board, the ledger, CI, and
+  Dependabot, and reports issues to the operating chat.
+- Spec-kit + AEE governance: a project constitution
+  (`.specify/memory/constitution.md`) and numbered specs under
+  `specs/` (001 gatekeeper dispatch, 002 runner lanes, 003 status /
+  logging / health, 004 WSL2 management, 005 fleet cutover,
+  006 repository and governance), each with an `aee-claims.json`
+  recording every requirement as a claim with evidence and a
+  falsification test.
+- The SKILL.md currency rule, stated in SKILL.md and CONTRIBUTING.md:
+  SKILL.md is updated in the same change as any behavior change.
+- Gatekeeper pause/resume: `gk pause --reason <text>` holds dispatch
+  of program jobs (the watch pass continues; status shows the pause
+  banner; sweep summaries print PAUSED) and `gk resume` clears it.
+  Jobs submitted with `--maintenance` dispatch during a pause,
+  bypassing the active cap and lane serialization but never the
+  duplicate check — for operator work on the fleet itself.
+- Gatekeeper stop/start and purge, completing the lifecycle CLI:
+  `gk stop` is the hard halt (sweeps return before spending any API
+  budget — no watch, no dispatch) and `gk start` clears both a stop
+  and a pause. `gk purge` removes terminal (completed/cancelled) job
+  records, dry-run unless `--yes`, with an optional
+  `--older-than-days` filter and `--ledger` to archive the ledger
+  to a fresh one.
+
+### Fixed
+
+- Log harvest now falls back to the REST logs archive when
+  `gh run view --log` cannot read a run (observed in the field: some
+  runs' logs are unreadable through the CLI but fine through the API).
+  The harvest records which source supplied the log.
+- Job-state saves fall back to a shell write when the host denies the
+  native temp-file write path, so sweeps keep persisting state through
+  intermittent write restrictions.
+
+### Changed (logging)
+
+- Sweeps now also write their one-line summary to a human-readable
+  rotating log (`gatekeeper.log`, 1 MB, one backup) alongside the
+  append-only JSON ledger.
+
 ### Changed
 
+- **License: the project is now licensed under the Apache License,
+  Version 2.0** (owner decision, 2026-10-27), superseding the
+  all-rights-reserved terms the 0.1.x releases shipped with. The
+  historical release entries below are unchanged.
 - Project renamed from Sallyport to Syncyard. The repository is now
   `AXIOVEX/syncyard`; GitHub redirects the previous repository URL.
   Documentation, the agent skill, workflow and client repository

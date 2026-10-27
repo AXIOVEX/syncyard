@@ -35,8 +35,13 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 QUEUE_DIR = os.path.join(BASE, "queue")
 LEDGER = os.path.join(BASE, "ledger.jsonl")
 LOCK_DIR = os.path.join(BASE, ".sweep.lock")
+PAUSE_FILE = os.path.join(BASE, "PAUSED.json")
+STOP_FILE = os.path.join(BASE, "STOPPED.json")
 
 REPO = "AXIOVEX/syncyard"
+PROJECT_REPO = "AXIOVEX/syncyard"   # canonical project repo (status --repo)
+HLOG = os.path.join(BASE, "gatekeeper.log")   # human-readable rotating log
+HLOG_MAX_BYTES = 1000000
 
 # --- Config constants (edit here, nowhere else) ---------------------------
 MAX_ACTIVE_DISPATCHED = 2        # total gatekeeper-active runs cap, pre-lanes
@@ -93,6 +98,19 @@ def minutes_between(a, b):
     return (b - a).total_seconds() / 60.0
 
 
+def hlog(msg):
+    """Append one line to the human-readable gatekeeper log, rotating at
+    HLOG_MAX_BYTES (one backup kept). Best-effort by design: a logging
+    failure must never break a sweep, so every error is swallowed."""
+    try:
+        if os.path.isfile(HLOG) and os.path.getsize(HLOG) > HLOG_MAX_BYTES:
+            os.replace(HLOG, HLOG + ".1")
+        with open(HLOG, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (now_iso(), msg))
+    except OSError:
+        pass
+
+
 def ledger(event, **kw):
     rec = {"ts": now_iso(), "event": event}
     rec.update(kw)
@@ -105,12 +123,214 @@ def job_path(job_id):
     return os.path.join(QUEUE_DIR, job_id + ".json")
 
 
+def pause_state():
+    """The pause record, or None when not paused. The file's mere
+    existence means paused (a corrupt record still pauses — the
+    operator's intent is the safe side)."""
+    if not os.path.isfile(PAUSE_FILE):
+        return None
+    try:
+        with open(PAUSE_FILE, encoding="utf-8") as f:
+            rec = json.load(f)
+        return rec if isinstance(rec, dict) else {"ts": None, "reason": ""}
+    except (OSError, ValueError):
+        return {"ts": None, "reason": ""}
+
+
+def _write_text_file(path, text):
+    """Write a small text file, falling back to a shell write when the
+    native path is denied (same pattern as save_job)."""
+    try:
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except PermissionError:
+        subprocess.run(["/bin/sh", "-c", 'cat > "$1"', "sh", path],
+                       input=text, text=True, check=True)
+
+
+def cmd_pause(args):
+    cur = pause_state()
+    if cur is not None:
+        print("ALREADY PAUSED since %s reason=%s"
+              % (cur.get("ts"), cur.get("reason") or ""))
+        return 0
+    rec = {"ts": now_iso(), "reason": args.reason or ""}
+    try:
+        _write_text_file(PAUSE_FILE,
+                         json.dumps(rec, indent=2, sort_keys=True))
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("ERROR: could not write the pause file (%s). The pause is "
+              "NOT in effect." % exc)
+        return 1
+    ledger("paused", reason=rec["reason"])
+    hlog("PAUSED at %s reason=%s" % (rec["ts"], rec["reason"]))
+    print("PAUSED at %s — dispatch of program jobs is held; "
+          "maintenance jobs still dispatch; the watch pass continues."
+          % rec["ts"])
+    return 0
+
+
+def cmd_resume(_args):
+    if pause_state() is None:
+        print("NOT PAUSED")
+        return 0
+    try:
+        os.unlink(PAUSE_FILE)
+    except OSError:
+        subprocess.run(["/bin/sh", "-c", 'rm -f "$1"', "sh", PAUSE_FILE],
+                       check=True)
+    ledger("resumed")
+    hlog("RESUMED at %s" % now_iso())
+    print("RESUMED — dispatch is flowing again.")
+    return 0
+
+
+def stop_state():
+    """The stop record, or None when not stopped. Like the pause, the
+    file's mere existence means stopped."""
+    if not os.path.isfile(STOP_FILE):
+        return None
+    try:
+        with open(STOP_FILE, encoding="utf-8") as f:
+            rec = json.load(f)
+        return rec if isinstance(rec, dict) else {"ts": None, "reason": ""}
+    except (OSError, ValueError):
+        return {"ts": None, "reason": ""}
+
+
+def _clear_marker(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        subprocess.run(["/bin/sh", "-c", 'rm -f "$1"', "sh", path],
+                       check=True)
+
+
+def cmd_start(_args):
+    """Start: clear any stop and any pause — fully running."""
+    cleared = []
+    for path, name in ((STOP_FILE, "stop"), (PAUSE_FILE, "pause")):
+        if os.path.isfile(path):
+            _clear_marker(path)
+            cleared.append(name)
+    if not cleared:
+        print("ALREADY RUNNING (no stop or pause in effect)")
+        return 0
+    ledger("started", cleared=cleared)
+    hlog("STARTED at %s (cleared: %s)" % (now_iso(), ", ".join(cleared)))
+    print("RUNNING — cleared %s. Dispatch and watch are live."
+          % " + ".join(cleared))
+    return 0
+
+
+def cmd_stop(args):
+    """Stop: the hard halt. Sweeps no-op (no budget spent, no watch,
+    no dispatch) until `gk start`. Stronger than pause; jobs already
+    dispatched are untouched, as always."""
+    cur = stop_state()
+    if cur is not None:
+        print("ALREADY STOPPED since %s reason=%s"
+              % (cur.get("ts"), cur.get("reason") or ""))
+        return 0
+    rec = {"ts": now_iso(), "reason": args.reason or ""}
+    try:
+        _write_text_file(STOP_FILE,
+                         json.dumps(rec, indent=2, sort_keys=True))
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("ERROR: could not write the stop file (%s). The stop is "
+              "NOT in effect." % exc)
+        return 1
+    ledger("stopped", reason=rec["reason"])
+    hlog("STOPPED at %s reason=%s" % (rec["ts"], rec["reason"]))
+    print("STOPPED at %s — sweeps will no-op until `gk start`."
+          % rec["ts"])
+    return 0
+
+
+def cmd_purge(args):
+    """Purge housekeeping: remove terminal (completed/cancelled) job
+    records, optionally only those older than N days from creation,
+    and optionally archive the ledger to a fresh one. DRY RUN unless
+    --yes. Active and submitted records are never touched."""
+    jobs = load_jobs()
+    targets = []
+    for j in jobs:
+        if j["state"] not in ("completed", "cancelled"):
+            continue
+        if args.older_than_days is not None:
+            created = parse_iso(j.get("created_at"))
+            age_min = minutes_between(created, now_dt())
+            if age_min is None or age_min < args.older_than_days * 1440:
+                continue
+        targets.append(j)
+    verb = "purged" if args.yes else "would purge"
+    for j in targets:
+        print("  %s %s key=%s state=%s"
+              % (verb, j["id"], j["key"], j["state"]))
+    if args.ledger:
+        print("  %s the ledger (archive ledger.jsonl, start fresh)"
+              % verb)
+    if not targets and not args.ledger:
+        print("PURGE: nothing matches (terminal states: completed, "
+              "cancelled%s)"
+              % ("" if args.older_than_days is None
+                 else "; older than %s day(s) from creation"
+                      % args.older_than_days))
+        return 0
+    if not args.yes:
+        print("DRY RUN — nothing deleted. Re-run with --yes to purge "
+              "%d job record(s)%s."
+              % (len(targets), " and archive the ledger" if args.ledger
+                 else ""))
+        return 0
+    removed = 0
+    for j in targets:
+        _clear_marker(os.path.join(QUEUE_DIR, j["id"] + ".json"))
+        removed += 1
+    archived = False
+    if args.ledger and os.path.isfile(LEDGER):
+        stamp = now_iso().replace(":", "").replace("-", "")
+        dest = os.path.join(BASE, "ledger-archived-%s.jsonl" % stamp)
+        os.replace(LEDGER, dest)
+        open(LEDGER, "a", encoding="utf-8").close()
+        archived = True
+        print("  ledger archived to %s" % os.path.basename(dest))
+    ledger("purged", jobs=removed, ledger_archived=archived)
+    hlog("PURGED %d job record(s) at %s" % (removed, now_iso()))
+    print("PURGED %d job record(s)%s."
+          % (removed, "; ledger archived" if archived else ""))
+    return 0
+
+
 def save_job(job):
+    payload = json.dumps(job, indent=2, sort_keys=True)
     fd, tmp = tempfile.mkstemp(dir=QUEUE_DIR, suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(job, f, indent=2, sort_keys=True)
+            f.write(payload)
         os.replace(tmp, job_path(job["id"]))
+        return
+    except PermissionError:
+        # Some hosts intermittently deny the native temp-file write path
+        # (EPERM) while plain shell writes still land. Fall back to a
+        # shell write (cat into a temp name, then mv) so sweeps keep
+        # persisting state during a restriction window.
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        tmp2 = os.path.join(QUEUE_DIR, ".%s.%d.tmp" % (job["id"], os.getpid()))
+        try:
+            subprocess.run(
+                ["/bin/sh", "-c", 'cat > "$1" && mv "$1" "$2"', "sh",
+                 tmp2, job_path(job["id"])],
+                input=payload, text=True, check=True)
+        except BaseException:
+            try:
+                os.unlink(tmp2)
+            except OSError:
+                pass
+            raise
     except BaseException:
         try:
             os.unlink(tmp)
@@ -217,6 +437,7 @@ def cmd_submit(args):
         "verdict_source": None,
         "watermarks": {},
         "flags": [],
+        "maintenance": bool(getattr(args, "maintenance", False)),
     }
     if args.workflow == "grab.yml":
         if not args.grab_path:
@@ -418,12 +639,16 @@ def dispatch_pass(jobs, runs_by_id):
                    if j.get("script_sha256")}
     waiting = sorted([j for j in jobs if j["state"] == "submitted"],
                      key=lambda j: j["created_at"])
+    paused = (pause_state() is not None or stop_state() is not None)
     for job in waiting:
-        if active_count >= MAX_ACTIVE_DISPATCHED:
+        maint = bool(job.get("maintenance"))
+        if paused and not maint:
+            continue  # paused: program work holds; maintenance flows
+        if active_count >= MAX_ACTIVE_DISPATCHED and not maint:
             ledger("dispatch_deferred_cap", job_id=job["id"], key=job["key"],
                    active=active_count, cap=MAX_ACTIVE_DISPATCHED)
             continue
-        if job["lane"] in held_lanes:
+        if job["lane"] in held_lanes and not maint:
             continue  # lane serialization: another job of this class is live
         if (job["workflow"], job.get("script_sha256")) in held_hashes:
             ledger("dispatch_skipped_duplicate", job_id=job["id"],
@@ -467,10 +692,40 @@ def extract_log_lines(raw):
     return lines
 
 
+def fetch_log_archive(run_id):
+    """Fallback log source: the REST logs archive (a zip of per-step text
+    files). Some runs' logs cannot be read by `gh run view --log` at all
+    (observed 2026-10-27, run 40512763692: --log failed on every attempt
+    while the archive read fine). Returns combined text or None."""
+    import io
+    import zipfile
+    try:
+        p = subprocess.run(
+            ["gh", "api", "repos/%s/actions/runs/%s/logs" % (REPO, run_id)],
+            capture_output=True, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode != 0 or not p.stdout:
+        return None
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(p.stdout))
+    except zipfile.BadZipFile:
+        return None
+    chunks = []
+    for name in sorted(zf.namelist()):
+        if name.endswith(".txt"):
+            chunks.append(zf.read(name).decode("utf-8", "replace"))
+    return "\n".join(chunks) if chunks else None
+
+
 def fetch_log_once(job):
     rc, out, err = run_cmd(["gh", "run", "view", str(job["run_id"]), "-R",
                             REPO, "--log"], timeout=180)
+    via = "gh-log"
     if rc != 0 or not out:
+        out = fetch_log_archive(job["run_id"])
+        via = "api-archive"
+    if not out:
         job["log_pending"] = True
         ledger("log_fetch_failed", job_id=job["id"], key=job["key"],
                run_id=job["run_id"], rc=rc)
@@ -480,10 +735,11 @@ def fetch_log_once(job):
     job["markers"] = [ln for ln in lines if MARKER_RE.match(ln.strip())]
     job["log_fetched_at"] = now_iso()
     job["log_pending"] = False
+    job["log_source"] = via
     job["verdict_source"] = "markers"
     ledger("log_harvested", job_id=job["id"], key=job["key"],
            run_id=job["run_id"], markers=len(job["markers"]),
-           log_lines=len(lines))
+           log_lines=len(lines), via=via)
     return True
 
 
@@ -630,6 +886,13 @@ def cmd_sweep(_args):
         print("SWEEP skipped: another sweep holds the lock")
         return 0
     try:
+        stopped = stop_state()
+        if stopped is not None:
+            print("SWEEP %s STOPPED since %s (%s) — nothing spent, "
+                  "nothing watched, nothing dispatched"
+                  % (now_iso(), stopped.get("ts"),
+                     stopped.get("reason") or "no reason recorded"))
+            return 0
         remaining, err = rate_limit_remaining()
         if err:
             ledger("api_error", where="rate_limit", error=err)
@@ -640,6 +903,8 @@ def cmd_sweep(_args):
             ledger("budget_critical", remaining=remaining)
             print("SWEEP budget_remaining=%d CRITICAL: no dispatch, no "
                   "watch calls" % remaining)
+            hlog("SWEEP budget_remaining=%d CRITICAL: no dispatch, no "
+                 "watch calls" % remaining)
             return 0
         standdown = remaining < STANDDOWN_REMAINING
         if standdown:
@@ -662,11 +927,14 @@ def cmd_sweep(_args):
                       if j["state"] in RUN_HOLDING_STATES
                       and j.get("run_status") != "completed"])
         waiting = len([j for j in load_jobs() if j["state"] == "submitted"])
-        print("SWEEP %s budget_remaining=%d%s dispatched=%d changes=%d "
-              "breaches=%d active=%d waiting=%d"
-              % (now_iso(), remaining,
-                 " STANDDOWN" if standdown else "", dispatched, changes,
-                 breaches, active, waiting))
+        summary = ("SWEEP %s budget_remaining=%d%s%s dispatched=%d "
+                   "changes=%d breaches=%d active=%d waiting=%d"
+                   % (now_iso(), remaining,
+                      " STANDDOWN" if standdown else "",
+                      " PAUSED" if pause_state() is not None else "",
+                      dispatched, changes, breaches, active, waiting))
+        print(summary)
+        hlog(summary)
         return 0
     finally:
         try:
@@ -677,14 +945,102 @@ def cmd_sweep(_args):
 
 # --- status ------------------------------------------------------------------
 
-def cmd_status(_args):
+def job_issues(j):
+    """One job's current issue list, derived from its saved state only."""
+    out = []
+    for fl in j.get("flags", []):
+        if fl.startswith("watermark"):
+            out.append(fl.replace("_", " "))
+    if j.get("log_pending"):
+        out.append("log harvest failed/pending (verdict not yet readable)")
+    if j["state"] == "dispatching":
+        out.append("dispatch in progress (stale-dispatching is flagged "
+                   "for a human, never auto-redispatched)")
+    if j["state"] == "completed" and j.get("run_conclusion") not in (
+            None, "success") and not j.get("markers"):
+        out.append("completed with conclusion=%s and no markers"
+                   % j.get("run_conclusion"))
+    if j["state"] == "completed" and j.get("run_conclusion") == "success" \
+            and j.get("verdict_source") != "markers":
+        out.append("completed successfully but no marker verdict harvested")
+    return out
+
+
+def repo_health():
+    """Project-repo health for `status --repo`: latest CI runs on main,
+    open Dependabot alerts, and open Dependabot pull requests. Three API
+    calls, made only when the flag is passed (never in the default
+    local-only status). Failures degrade to an 'unavailable' line."""
+    print("\nrepo health (%s):" % PROJECT_REPO)
+    rc, out, _ = run_cmd(["gh", "run", "list", "-R", PROJECT_REPO, "-L", "3",
+                          "--json", "workflowName,status,conclusion,"
+                          "createdAt"], timeout=60)
+    if rc == 0 and out:
+        try:
+            for r in json.loads(out):
+                print("  CI %-10s %-12s %s (%s)"
+                      % (r.get("workflowName"), r.get("status"),
+                         r.get("conclusion") or "-", r.get("createdAt")))
+        except ValueError:
+            print("  CI unavailable (unparsable response)")
+    else:
+        print("  CI unavailable")
+    rc, out, _ = run_cmd(["gh", "api", "repos/%s/dependabot/alerts"
+                          "?state=open&per_page=30" % PROJECT_REPO],
+                         timeout=60)
+    if rc == 0 and out is not None:
+        try:
+            alerts = json.loads(out or "[]")
+            if alerts:
+                for a in alerts:
+                    adv = a.get("security_advisory") or {}
+                    print("  DEPENDABOT ALERT #%s %s (%s)"
+                          % (a.get("number"), adv.get("summary", "?"),
+                             adv.get("severity", "?")))
+            else:
+                print("  dependabot alerts: none open")
+        except ValueError:
+            print("  dependabot alerts: unavailable (unparsable response)")
+    else:
+        print("  dependabot alerts: unavailable")
+    rc, out, _ = run_cmd(["gh", "pr", "list", "-R", PROJECT_REPO,
+                          "--author", "app/dependabot", "--json",
+                          "number,title"], timeout=60)
+    if rc == 0 and out:
+        try:
+            prs = json.loads(out)
+            for pr in prs:
+                print("  DEPENDABOT PR #%s %s" % (pr.get("number"),
+                                                  pr.get("title")))
+            if not prs:
+                print("  dependabot PRs: none open")
+        except ValueError:
+            print("  dependabot PRs: unavailable (unparsable response)")
+    else:
+        print("  dependabot PRs: unavailable")
+
+
+def cmd_status(args):
     jobs = load_jobs()
     by_state = {}
     for j in jobs:
         by_state[j["state"]] = by_state.get(j["state"], 0) + 1
     print("GATEKEEPER STATUS %s" % now_iso())
+    st = stop_state()
+    if st is not None:
+        print("!! STOPPED since %s — %s (sweeps no-op until `gk start`)"
+              % (st.get("ts"), st.get("reason") or "no reason recorded"))
+    ps = pause_state()
+    if ps is not None:
+        print("!! PAUSED since %s — %s (program dispatch held; "
+              "maintenance jobs still flow)"
+              % (ps.get("ts"), ps.get("reason") or "no reason recorded"))
     print("jobs by state: %s" % (", ".join(
         "%s=%d" % (k, by_state[k]) for k in sorted(by_state)) or "none"))
+    queued = [j for j in jobs if j.get("run_status") == "queued"
+              or j["state"] in ("submitted", "dispatched")]
+    running = [j for j in jobs if j.get("run_status") == "in_progress"]
+    print("queued: %d   running: %d" % (len(queued), len(running)))
     print("")
     print("%-46s %-16s %-7s %-11s %-12s %s" % ("KEY", "PROGRAM", "LANE",
                                                "STATE", "RUN_STATUS",
@@ -704,6 +1060,12 @@ def cmd_status(_args):
                   % (j["key"], j.get("run_id"), j.get("run_conclusion"),
                      j.get("verdict_source"),
                      len(j.get("markers", []))))
+    issues = [(j, job_issues(j)) for j in jobs]
+    issues = [(j, i) for (j, i) in issues if i]
+    print("\nISSUES: %d" % len(issues))
+    for j, iss in issues:
+        for s in iss:
+            print("  [%s] %s — %s" % (j["program"], j["key"], s))
     if os.path.isfile(LEDGER):
         with open(LEDGER, encoding="utf-8") as f:
             lines = [ln for ln in f.read().splitlines() if ln.strip()]
@@ -716,6 +1078,8 @@ def cmd_status(_args):
                                          or ""))
             except ValueError:
                 print("  " + ln)
+    if getattr(args, "repo", False):
+        repo_health()
     return 0
 
 
@@ -734,7 +1098,35 @@ def main(argv=None):
     p.add_argument("--cwd")
     p.add_argument("--expected-min", type=float)
     p.add_argument("--key", required=True)
+    p.add_argument("--maintenance", action="store_true",
+                   help="operator maintenance job: dispatches even while "
+                        "paused, bypassing the active cap and lane "
+                        "serialization (never the duplicate check)")
     p.set_defaults(fn=cmd_submit)
+
+    p = sub.add_parser("pause")
+    p.add_argument("--reason", default="")
+    p.set_defaults(fn=cmd_pause)
+
+    p = sub.add_parser("resume")
+    p.set_defaults(fn=cmd_resume)
+
+    p = sub.add_parser("start")
+    p.set_defaults(fn=cmd_start)
+
+    p = sub.add_parser("stop")
+    p.add_argument("--reason", default="")
+    p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("purge")
+    p.add_argument("--older-than-days", type=float, default=None,
+                   help="only purge terminal records created more than "
+                        "N days ago (default: all terminal records)")
+    p.add_argument("--ledger", action="store_true",
+                   help="also archive ledger.jsonl and start a fresh one")
+    p.add_argument("--yes", action="store_true",
+                   help="actually delete (default is a dry run)")
+    p.set_defaults(fn=cmd_purge)
 
     p = sub.add_parser("adopt")
     p.add_argument("--run-id", required=True)
@@ -753,6 +1145,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_sweep)
 
     p = sub.add_parser("status")
+    p.add_argument("--repo", action="store_true",
+                   help="also show project-repo CI + Dependabot health")
     p.set_defaults(fn=cmd_status)
 
     args = ap.parse_args(argv)
