@@ -37,6 +37,7 @@ LEDGER = os.path.join(BASE, "ledger.jsonl")
 LOCK_DIR = os.path.join(BASE, ".sweep.lock")
 PAUSE_FILE = os.path.join(BASE, "PAUSED.json")
 STOP_FILE = os.path.join(BASE, "STOPPED.json")
+OUTBOX_CURSOR = os.path.join(BASE, "outbox-cursor.json")
 
 REPO = "AXIOVEX/syncyard"
 PROJECT_REPO = "AXIOVEX/syncyard"   # canonical project repo (status --repo)
@@ -302,6 +303,81 @@ def cmd_purge(args):
     return 0
 
 
+def cmd_outbox(args):
+    """Push-notification outbox. Reads ledger events past the stored
+    cursor and prints, grouped by each job's notify_chat, the pushes
+    owed: STARTED (with the job's expected length), COMPLETED
+    (conclusion plus verdict highlights from the job's harvested
+    markers), ESCALATED (W2 watermark). The cursor starts at the
+    current ledger end the first time — history is never replayed.
+    --ack advances the cursor once the caller has delivered the
+    pushes; delivery itself is the caller's act (the coordination
+    chat forwards each group into the named chat)."""
+    try:
+        with open(LEDGER, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    cursor = None
+    if os.path.isfile(OUTBOX_CURSOR):
+        try:
+            with open(OUTBOX_CURSOR, encoding="utf-8") as f:
+                cursor = int(json.load(f)["line"])
+        except (OSError, ValueError, KeyError, TypeError):
+            cursor = None
+    if cursor is None:
+        _write_text_file(OUTBOX_CURSOR, json.dumps({"line": len(lines)}))
+        print("OUTBOX initialized at line %d (history not replayed)"
+              % len(lines))
+        return 0
+    if args.ack:
+        _write_text_file(OUTBOX_CURSOR, json.dumps({"line": len(lines)}))
+        print("OUTBOX ACK line=%d" % len(lines))
+        return 0
+    jobs = {j["id"]: j for j in load_jobs()}
+    groups = {}
+    for raw in lines[cursor:]:
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        job = jobs.get(ev.get("job_id") or "")
+        if not job or not job.get("notify_chat"):
+            continue
+        head = "[%s] %s" % (job["program"], job["key"])
+        msg = None
+        if (ev.get("event") == "state_change"
+                and ev.get("to_status") == "in_progress"):
+            exp = job.get("expected_min")
+            msg = "%s STARTED run %s%s" % (
+                head, ev.get("run_id"),
+                (" expected ~%g min" % exp) if exp else "")
+        elif (ev.get("event") == "state_change"
+                and ev.get("to_status") == "completed"):
+            marks = job.get("markers") or []
+            hl = [m for m in marks if ("RESULT" in m or "VERDICT" in m)][:3]
+            msg = "%s COMPLETED run %s conclusion=%s markers=%d%s" % (
+                head, ev.get("run_id"), ev.get("conclusion") or "?",
+                len(marks),
+                (" | " + " ;; ".join(hl)) if hl
+                else (" | verdict pending harvest" if not marks else ""))
+        elif (ev.get("event") == "watermark_escalation"
+                and ev.get("level") == "W2"):
+            msg = "%s ESCALATED W2 %s run %s age=%s min" % (
+                head, ev.get("classification"), ev.get("run_id"),
+                ev.get("age_min"))
+        if msg:
+            groups.setdefault(job["notify_chat"], []).append(msg)
+    if not groups:
+        print("OUTBOX empty")
+        return 0
+    for chat in sorted(groups):
+        print("NOTIFY %s" % chat)
+        for msg in groups[chat]:
+            print("  %s" % msg)
+    return 0
+
+
 def save_job(job):
     payload = json.dumps(job, indent=2, sort_keys=True)
     fd, tmp = tempfile.mkstemp(dir=QUEUE_DIR, suffix=".tmp")
@@ -438,6 +514,7 @@ def cmd_submit(args):
         "watermarks": {},
         "flags": [],
         "maintenance": bool(getattr(args, "maintenance", False)),
+        "notify_chat": getattr(args, "notify_chat", None),
     }
     if args.workflow == "grab.yml":
         if not args.grab_path:
@@ -497,6 +574,7 @@ def cmd_adopt(args):
         "verdict_source": None,
         "watermarks": {},
         "flags": [],
+        "notify_chat": getattr(args, "notify_chat", None),
     }
     save_job(job)
     ledger("adopted", job_id=job["id"], key=job["key"],
@@ -1102,6 +1180,9 @@ def main(argv=None):
                    help="operator maintenance job: dispatches even while "
                         "paused, bypassing the active cap and lane "
                         "serialization (never the duplicate check)")
+    p.add_argument("--notify-chat", default=None,
+                   help="chat id to push started/completed/escalated "
+                        "updates for this job to (see `gk outbox`)")
     p.set_defaults(fn=cmd_submit)
 
     p = sub.add_parser("pause")
@@ -1128,6 +1209,12 @@ def main(argv=None):
                    help="actually delete (default is a dry run)")
     p.set_defaults(fn=cmd_purge)
 
+    p = sub.add_parser("outbox")
+    p.add_argument("--ack", action="store_true",
+                   help="advance the outbox cursor to the current "
+                        "ledger end (after the pushes are delivered)")
+    p.set_defaults(fn=cmd_outbox)
+
     p = sub.add_parser("adopt")
     p.add_argument("--run-id", required=True)
     p.add_argument("--program", required=True)
@@ -1135,6 +1222,9 @@ def main(argv=None):
     p.add_argument("--lane", required=True, choices=LANES)
     p.add_argument("--expected-min", type=float)
     p.add_argument("--key", required=True)
+    p.add_argument("--notify-chat", default=None,
+                   help="chat id to push started/completed/escalated "
+                        "updates for this job to (see `gk outbox`)")
     p.set_defaults(fn=cmd_adopt)
 
     p = sub.add_parser("cancel")

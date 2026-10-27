@@ -84,6 +84,18 @@ ones invisibly.
   targets. Because records carry harvested markers and log tails,
   the age filter is the normal mode; every executed purge is
   itself ledgered.
+- **FR-011 — Push notifications.** A job MAY carry a notify target
+  (a chat id, set by `--notify-chat` at submit or adopt). The
+  gatekeeper MUST surface the pushes owed — started (with the
+  job's expected length), completed (conclusion plus verdict
+  highlights from the harvested markers), and W2-escalated —
+  grouped by notify target, derived from the append-only ledger,
+  never replaying history from before the mechanism existed. The
+  outbox cursor advances only on an explicit ack after delivery.
+  Pushes ride the existing sweep cadence — no new infrastructure.
+  (Owner decision 2026-10-27: push over SSE and over an MCP front
+  door; MCP remains a possible later ergonomics addition, not the
+  push mechanism.)
 
 ## Claims discipline
 

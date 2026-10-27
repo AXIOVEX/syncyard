@@ -57,6 +57,7 @@ python3 gk.py resume                   # clear a pause
 python3 gk.py stop [--reason TEXT]     # hard halt: sweeps no-op until start
 python3 gk.py start                    # clear stop + pause: fully running
 python3 gk.py purge [--older-than-days N] [--ledger] [--yes]  # dry-run default
+python3 gk.py outbox [--ack]           # pushes owed to registered chats
 ```
 
 - **submit** writes a job file in state `submitted` and records the
@@ -135,6 +136,15 @@ python3 gk.py purge [--older-than-days N] [--ledger] [--yes]  # dry-run default
   records carry the harvested markers and log tails — they are the
   evidence trail — so purge with an age filter is the norm, not the
   exception.
+- **Push notifications** — `submit` and `adopt` accept
+  `--notify-chat <chat-id>`. A job carrying one produces pushes —
+  started (with its expected length), completed (conclusion plus
+  verdict highlights from the harvested markers), W2-escalated —
+  which `outbox` prints grouped by chat from the ledger (history
+  from before the mechanism existed is never replayed). Delivery
+  is the coordinator forwarding each group into the named chat;
+  `outbox --ack` then advances the cursor. Programs register once
+  and stop polling.
 
 One platform caveat, observed in the field: GitHub's run-level status
 for a run can lag or sit at `queued` while the job's log already holds

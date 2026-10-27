@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Gatekeeper push notifications: jobs register a chat with
+  `--notify-chat` (on submit or adopt) and receive started (with
+  expected length), completed (marker verdict), and W2-escalation
+  pushes via the new `gk outbox` command — no polling and no new
+  infrastructure (spec 001 FR-011).
+- Spec 006 closed: the polish pull request merged 2026-10-27 under
+  the owner's one-time protection pause, with protection verified
+  identical afterward.
 - New project logo: a marshalling-yard mark (three lanes converging through
   one gate) as `assets/logo.svg`, with rendered `assets/logo.png` and
   `assets/social-preview.png` alongside it. Replaces the previous emblem.
