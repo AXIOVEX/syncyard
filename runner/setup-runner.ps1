@@ -1,7 +1,7 @@
-# setup-runner.ps1 - Sallyport runner setup (version 0.1.1)
+# setup-runner.ps1 - Syncyard runner setup (version 0.2.0)
 #
 # Downloads the GitHub Actions runner package, registers ONE runner
-# against the Sallyport repository, and (with -Start) launches it as a
+# against the Syncyard repository, and (with -Start) launches it as a
 # user-window process under the signed-in user - NOT as a Windows
 # service. One runner per directory; run this script once per lane.
 #
@@ -9,7 +9,7 @@
 #   -RegistrationToken must be a fresh runner registration token for
 #   the repository (they expire in about an hour). Fetch it at setup
 #   time, for example:
-#     gh api -X POST repos/AXIOVEX/sallyport/actions/runners/registration-token --jq .token
+#     gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .token
 #   This script never writes the token to disk and never prints it.
 #   (The runner's own config stores its credentials next to the runner;
 #   that is the runner's normal mechanism.)
@@ -35,7 +35,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$RegistrationToken,
 
-    [string]$RepoUrl = "https://github.com/AXIOVEX/sallyport",
+    [string]$RepoUrl = "https://github.com/AXIOVEX/syncyard",
 
     [string]$RunnerVersion = "2.338.2",
 
@@ -51,7 +51,7 @@ $ErrorActionPreference = "Stop"
 $FleetLabels = @("desktop", "gpu")
 $AllLabels = (@("self-hosted", "Windows", "X64") + $FleetLabels + $Labels) -join ","
 
-Write-Host "Sallyport runner setup"
+Write-Host "Syncyard runner setup"
 Write-Host "  name    : $Name"
 Write-Host "  dir     : $RunnerDir"
 Write-Host "  repo    : $RepoUrl"

@@ -1,11 +1,11 @@
 ---
-name: sallyport
-description: Dispatch and watch jobs on the operator's own machines through the Sallyport gatekeeper (AXIOVEX/sallyport) — self-hosted GitHub Actions runner lanes with a shared API budget. Use whenever work must run on the operator's desktop or laptop: builds, probes, renders, hardware sessions, file returns. Covers submit/adopt/status, lane routing, marker verdicts, API discipline, and watermark escalation etiquette.
+name: syncyard
+description: Dispatch and watch jobs on the operator's own machines through the Syncyard gatekeeper (AXIOVEX/syncyard) — self-hosted GitHub Actions runner lanes with a shared API budget. Use whenever work must run on the operator's desktop or laptop: builds, probes, renders, hardware sessions, file returns. Covers submit/adopt/status, lane routing, marker verdicts, API discipline, and watermark escalation etiquette.
 ---
 
-# Sallyport — agent skill
+# Syncyard — agent skill
 
-Sallyport is the one door between agents and the operator's own machines.
+Syncyard is the one door between agents and the operator's own machines.
 Programs do not dispatch GitHub Actions workflows directly, and they never
 poll runs on their own. They submit job requests to the **gatekeeper**
 (`gatekeeper/gk.py`), which dispatches within the shared API budget,
@@ -13,7 +13,7 @@ assigns lanes, watches every run in one batched sweep, and records
 verdicts. If you are an agent with work for the operator's machines, work
 through the gatekeeper.
 
-Repository: `AXIOVEX/sallyport`. The live gatekeeper copy runs on the
+Repository: `AXIOVEX/syncyard`. The live gatekeeper copy runs on the
 operator's control machine and tracks this repository's releases.
 
 ## Commands
@@ -166,7 +166,7 @@ station) follow an extra discipline on top of everything above:
 ## Break-glass
 
 The operator keeps a separate, frozen emergency admin path outside
-Sallyport, for the case where the Actions route itself is broken. It
+Syncyard, for the case where the Actions route itself is broken. It
 carries **no job traffic, ever** — not for convenience, not for speed,
 not because the queue is long. If you believe the emergency path is
 genuinely needed (the gatekeeper cannot dispatch and the runners cannot

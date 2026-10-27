@@ -1,6 +1,6 @@
 #!/bin/bash
-# desktop-run.sh - Sallyport client: run a PowerShell command on a self-hosted
-# runner machine via GitHub Actions (AXIOVEX/sallyport, workflow run.yml).
+# desktop-run.sh - Syncyard client: run a PowerShell command on a self-hosted
+# runner machine via GitHub Actions (AXIOVEX/syncyard, workflow run.yml).
 #
 # PREFERRED ROUTE: submit jobs through the gatekeeper (gatekeeper/gk.py).
 # The gatekeeper enforces the shared API budget, duplicate checks, and lane
@@ -12,7 +12,7 @@
 # Usage: desktop-run.sh "<powershell command>" [cwd]
 #   cwd defaults to C:\Users\trist
 # Companion: desktop-wsl.sh for bash inside WSL2.
-REPO="AXIOVEX/sallyport"
+REPO="AXIOVEX/syncyard"
 CMD="$1"
 CWD="${2:-C:\\Users\\trist}"
 if [ -z "$CMD" ]; then echo "Usage: $0 \"<powershell command>\" [cwd]" >&2; exit 2; fi

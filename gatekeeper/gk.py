@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""gk.py - Sallyport gatekeeper: the single dispatch/watch door for the
-AXIOVEX/sallyport self-hosted runner fleet.
+"""gk.py - Syncyard gatekeeper: the single dispatch/watch door for the
+AXIOVEX/syncyard self-hosted runner fleet.
 
-Implements the Sallyport fleet standard (docs/STANDARD.md, Parts 2 and 4):
+Implements the Syncyard fleet standard (docs/STANDARD.md, Parts 2 and 4):
   - one watcher (this tool, via a 5-minute cron sweep), batched reads
   - gh api rate_limit headroom check before any dispatch; hard stand-down
     below 1,000 core remaining, completion-critical only below 500
@@ -36,7 +36,7 @@ QUEUE_DIR = os.path.join(BASE, "queue")
 LEDGER = os.path.join(BASE, "ledger.jsonl")
 LOCK_DIR = os.path.join(BASE, ".sweep.lock")
 
-REPO = "AXIOVEX/sallyport"
+REPO = "AXIOVEX/syncyard"
 
 # --- Config constants (edit here, nowhere else) ---------------------------
 MAX_ACTIVE_DISPATCHED = 2        # total gatekeeper-active runs cap, pre-lanes

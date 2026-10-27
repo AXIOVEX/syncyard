@@ -1,6 +1,6 @@
 # Gatekeeper
 
-The gatekeeper is the single dispatch/watch door for the Sallyport
+The gatekeeper is the single dispatch/watch door for the Syncyard
 self-hosted runner fleet. Programs submit job requests to it; it alone
 dispatches and watches, under the fleet standard in
 [docs/STANDARD.md](../docs/STANDARD.md) (Parts 2 and 4). It is files plus
@@ -33,7 +33,7 @@ Two constants at the top of `gk.py` are the fleet's configuration
 points:
 
 - `REPO` — the GitHub repository the runners are registered to
-  (`AXIOVEX/sallyport`).
+  (`AXIOVEX/syncyard`).
 - `DEFAULT_CWD` — the default working directory per workflow on the
   operator's machines. Set these to your own account's paths when
   deploying your own fleet.

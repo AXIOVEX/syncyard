@@ -1,4 +1,4 @@
-# The Sallyport fleet standard
+# The Syncyard fleet standard
 
 How a fleet of programs shares one GitHub account and a small set of
 personal machines without starving either. Three parts: the API budget,
@@ -19,7 +19,7 @@ GraphQL is a separate, much less loaded bucket; the pressure is all
 REST.
 
 1. **One watcher per run.** Only the dispatching program polls its run.
-   Nobody else polls it "to check." Under Sallyport, the gatekeeper is
+   Nobody else polls it "to check." Under Syncyard, the gatekeeper is
    that watcher for everything it tracks.
 2. **Poll floors.** No faster than every **180 seconds** while a run is
    queued, and every **300 seconds** while it executes — a 3–5 minute
