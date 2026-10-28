@@ -114,11 +114,71 @@ def hlog(msg):
         pass
 
 
+def _write_verified_bytes(path, data, attempts=8):
+    """WRITE-VERIFY-RETRY (spec 001 FR-012): write data to path with
+    unbuffered syscalls, fsync, then READ BACK and byte-compare.
+    Retries with backoff (0.25s doubling, capped at 8s). Returns True
+    only when the bytes on disk are exactly the bytes given - the VM
+    write restriction can drop a buffered write silently and leave a
+    0-byte file standing, so an unverified success is never trusted.
+    Returns False after the bounded retries are exhausted."""
+    for i in range(attempts):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                         0o644)
+            try:
+                view = memoryview(data)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            with open(path, "rb") as f:
+                back = f.read()
+            if back == data and len(back) > 0:
+                return True
+        except OSError:
+            pass
+        if i + 1 < attempts:
+            time.sleep(min(0.25 * (2 ** i), 8.0))
+    return False
+
+
+def _append_verified(path, line, attempts=8):
+    """Append one line and verify it landed (file size grows by
+    exactly len(line)); same retry discipline as
+    _write_verified_bytes. Returns True only when verified."""
+    data = line.encode("utf-8")
+    for i in range(attempts):
+        try:
+            before = os.path.getsize(path) if os.path.isfile(path) else 0
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                         0o644)
+            try:
+                view = memoryview(data)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            if os.path.getsize(path) == before + len(data):
+                return True
+        except OSError:
+            pass
+        if i + 1 < attempts:
+            time.sleep(min(0.25 * (2 ** i), 8.0))
+    return False
+
+
 def ledger(event, **kw):
     rec = {"ts": now_iso(), "event": event}
     rec.update(kw)
-    with open(LEDGER, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, sort_keys=True) + "\n")
+    line = json.dumps(rec, sort_keys=True) + "\n"
+    if not _append_verified(LEDGER, line):
+        raise IOError("ledger append could not be verified after "
+                      "retries: %s" % event)
     return rec
 
 
@@ -141,14 +201,12 @@ def pause_state():
 
 
 def _write_text_file(path, text):
-    """Write a small text file, falling back to a shell write when the
-    native path is denied (same pattern as save_job)."""
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
-    except PermissionError:
-        subprocess.run(["/bin/sh", "-c", 'cat > "$1"', "sh", path],
-                       input=text, text=True, check=True)
+    """Write a small text file through the write-verify-retry path
+    (spec 001 FR-012). Raises IOError when the write cannot be
+    verified - a pause/stop record that silently did not land is a
+    safety failure, not a soft one."""
+    if not _write_verified_bytes(path, text.encode("utf-8")):
+        raise IOError("could not write verified file: %s" % path)
 
 
 def cmd_pause(args):
@@ -381,40 +439,40 @@ def cmd_outbox(args):
 
 
 def save_job(job):
-    payload = json.dumps(job, indent=2, sort_keys=True)
-    fd, tmp = tempfile.mkstemp(dir=QUEUE_DIR, suffix=".tmp")
+    """Persist a job record under WRITE-VERIFY-RETRY (spec 001
+    FR-012): the payload is written to a unique temp file and read
+    back byte-for-byte before it is moved into place; if the move
+    itself is refused, the payload is written directly to the final
+    path and verified there. Raises IOError when no verified write
+    lands - callers must never treat an unverified save as done, and
+    a 0-byte or partial file is never left standing as the record."""
+    payload = json.dumps(job, indent=2, sort_keys=True).encode("utf-8")
+    final = job_path(job["id"])
+    tmp = os.path.join(QUEUE_DIR, ".%s.%d.tmp"
+                       % (job["id"], os.getpid()))
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(payload)
-        os.replace(tmp, job_path(job["id"]))
-        return
-    except PermissionError:
-        # VM write restriction (see AGENTS.md desktop-relay failsafe note):
-        # native create/replace writes can be blocked with EPERM while shell
-        # writes still work. Fall back to writing through /bin/sh so sweeps
-        # keep persisting state during a restriction window.
+        if _write_verified_bytes(tmp, payload):
+            for i in range(8):
+                try:
+                    os.replace(tmp, final)
+                    with open(final, "rb") as f:
+                        if f.read() == payload:
+                            return
+                except OSError:
+                    pass
+                if i + 1 < 8:
+                    time.sleep(min(0.25 * (2 ** i), 8.0))
+        # The move would not land (or the temp write never verified):
+        # write the final path directly and verify it there.
+        if _write_verified_bytes(final, payload):
+            return
+        raise IOError("save_job could not verify a write for job %s"
+                      % job["id"])
+    finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        tmp2 = os.path.join(QUEUE_DIR, ".%s.%d.tmp" % (job["id"], os.getpid()))
-        try:
-            subprocess.run(
-                ["/bin/sh", "-c", 'cat > "$1" && mv "$1" "$2"', "sh",
-                 tmp2, job_path(job["id"])],
-                input=payload, text=True, check=True)
-        except BaseException:
-            try:
-                os.unlink(tmp2)
-            except OSError:
-                pass
-            raise
-    except BaseException:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
 
 
 def load_jobs():
@@ -423,8 +481,16 @@ def load_jobs():
         return jobs
     for name in sorted(os.listdir(QUEUE_DIR)):
         if name.endswith(".json"):
-            with open(os.path.join(QUEUE_DIR, name), encoding="utf-8") as f:
-                jobs.append(json.load(f))
+            try:
+                with open(os.path.join(QUEUE_DIR, name),
+                          encoding="utf-8") as f:
+                    jobs.append(json.load(f))
+            except (OSError, ValueError) as e:
+                # A 0-byte or partial record (the silent-drop write
+                # mode) must not crash every command or pose as a
+                # job: skip it loudly (spec 001 FR-012).
+                print("WARNING: skipping unreadable job file %s: %s"
+                      % (name, e), file=sys.stderr)
     return jobs
 
 
@@ -539,6 +605,14 @@ def cmd_submit(args):
     ledger("submitted", job_id=job["id"], key=job["key"],
            program=job["program"], workflow=job["workflow"],
            lane=job["lane"], script_sha256=job["script_sha256"])
+    # FR-012: a submission is only reported queued after the loader
+    # reads back the exact record that was written.
+    landed = find_active(load_jobs(), key=job["key"])
+    if (landed is None or landed["id"] != job["id"]
+            or landed.get("script_sha256") != job["script_sha256"]):
+        print("ERROR: submission %s did not verify on read-back; "
+              "it is NOT queued" % job["id"])
+        return 4
     print("SUBMITTED %s key=%s program=%s workflow=%s lane=%s"
           % (job["id"], job["key"], job["program"], job["workflow"],
              job["lane"]))

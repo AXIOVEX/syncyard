@@ -6,6 +6,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Gatekeeper durable writes (spec 001 FR-012): every queue, ledger
+  and control-file write is now write-verify-retry — unbuffered
+  write, read-back byte verification, bounded retries with backoff,
+  loud failure when unverifiable. The loader skips unreadable
+  records with a warning, and a submission reports queued only
+  after the loader verifies the record written. Defect escalation
+  2026-10-27: the host VM intermittently refuses writes and can
+  silently drop a buffered write, leaving a 0-byte file.
+
 
 ### Added
 
