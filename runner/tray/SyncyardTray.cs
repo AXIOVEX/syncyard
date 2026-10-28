@@ -409,9 +409,9 @@ namespace SyncyardTray
                          " runners up";
         }
 
-        // Icon states (FR-007): 0 = all runners up, clean mark;
-        // 1 = some down, amber slash; 2 = none up or faulted, red
-        // slash. The slash is drawn with a white halo so it reads on
+        // Icon states (FR-007): 0 = all runners up, clean color
+        // mark; 1 = some down, color mark with amber slash; 2 = none
+        // up or faulted, GRAYSCALE mark with red slash. The slash is drawn with a white halo so it reads on
         // light and dark taskbars. The dot exists only if the mark
         // itself failed to load, which the embedded resource makes a
         // should-never-happen path.
@@ -427,7 +427,32 @@ namespace SyncyardTray
                 g.Clear(Color.Transparent);
                 if (_logoImage != null)
                 {
-                    g.DrawImage(_logoImage, 0, 0, 32, 32);
+                    if (state == 2)
+                    {
+                        // Fully offline reads as a dead icon: the mark
+                        // in grayscale under the red slash, visibly
+                        // different from the live color states.
+                        var gray = new System.Drawing.Imaging.ColorMatrix(
+                            new float[][] {
+                                new float[] {0.33f, 0.33f, 0.33f, 0, 0},
+                                new float[] {0.33f, 0.33f, 0.33f, 0, 0},
+                                new float[] {0.33f, 0.33f, 0.33f, 0, 0},
+                                new float[] {0, 0, 0, 1, 0},
+                                new float[] {0, 0, 0, 0, 1} });
+                        using (var attrs =
+                            new System.Drawing.Imaging.ImageAttributes())
+                        {
+                            attrs.SetColorMatrix(gray);
+                            g.DrawImage(_logoImage,
+                                new Rectangle(0, 0, 32, 32),
+                                0, 0, _logoImage.Width, _logoImage.Height,
+                                GraphicsUnit.Pixel, attrs);
+                        }
+                    }
+                    else
+                    {
+                        g.DrawImage(_logoImage, 0, 0, 32, 32);
+                    }
                     if (state > 0)
                     {
                         Color slash = state == 2

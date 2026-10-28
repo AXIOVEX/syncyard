@@ -74,9 +74,11 @@ supervisor is.
   connection at a glance (owner order 2026-10-27).** The
   notification-area icon is the official Syncyard mark, loaded from
   a copy embedded in the program itself (a mark file next to the
-  program is only a fallback), in three states: all runners up =
-  the clean mark; some runners down = the mark with an amber slash;
-  no runners up, or a runner faulted = the mark with a red slash.
+  program is only a fallback), in three states that read differently
+  at a glance: all runners up = the clean mark in full color; some
+  runners down = the color mark with an amber slash; no runners up,
+  or a runner faulted = the mark in GRAYSCALE with a red slash, so
+  all-disconnected never looks like all-connected.
   A plain colored dot is never the shipped icon.
 - **FR-008 — Bulk controls in the tray menu (owner order
   2026-10-27).** The tray menu offers Start all and Stop all above

@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tray offline state is unmistakable: with no runners up (or one
+  faulted) the tray mark renders in grayscale under its red slash;
+  the color states mean at least one runner is live (FR-007).
 - Tray icon and menu (spec 007 FR-007/FR-008): the notification
   icon is the official mark loaded from a copy embedded in the
   program itself — clean when all runners are up, amber slash when
