@@ -438,6 +438,19 @@ def cmd_outbox(args):
     return 0
 
 
+def _record_bytes_valid(data):
+    """True when data is a non-empty JSON record. Used by save_job's
+    failure cleanup to tell a valid older record (leave standing)
+    from a 0-byte/partial husk (remove)."""
+    if not data:
+        return False
+    try:
+        json.loads(data.decode("utf-8"))
+        return True
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
 def save_job(job):
     """Persist a job record under WRITE-VERIFY-RETRY (spec 001
     FR-012): the payload is written to a unique temp file and read
@@ -466,6 +479,25 @@ def save_job(job):
         # write the final path directly and verify it there.
         if _write_verified_bytes(final, payload):
             return
+        # Nothing verified. Remove the file ONLY when what stands
+        # there is not a valid record at all (a 0-byte or partial
+        # husk from a first write). When it holds a valid OLDER
+        # record - the normal case for a state update - leave it
+        # standing: the update failed loudly, the old state is the
+        # truth on disk, and the next pass retries the update.
+        # (First version of this cleanup deleted a live record on a
+        # failed dispatch update, 2026-10-27 23:53 ET - the check
+        # compared bytes instead of validity.)
+        try:
+            with open(final, "rb") as f:
+                current = f.read()
+            if not _record_bytes_valid(current):
+                os.unlink(final)
+                print("ERROR: removed unverifiable husk for job "
+                      "%s; the record must be resubmitted"
+                      % job["id"], file=sys.stderr)
+        except OSError:
+            pass
         raise IOError("save_job could not verify a write for job %s"
                       % job["id"])
     finally:

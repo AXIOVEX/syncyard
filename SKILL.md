@@ -102,7 +102,8 @@ $GK outbox --ack
 - **Logging is two-layered**: `ledger.jsonl` (append-only JSON, one
 - Every gatekeeper state write is write-verify-retry (spec 001
   FR-012): verified on read-back or it fails loudly; never trust
-  an unverified write, and never treat a 0-byte state file as real.
+  an unverified write, and never treat a 0-byte state file as real. A failed update leaves the last valid
+  record standing; only true husks are removed.
   record per event — the machine record) and `gatekeeper.log` (one
   human-readable line per sweep, rotating at 1 MB). At completion the
   sweep harvests a run's log once; if the CLI read fails it falls
