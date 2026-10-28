@@ -131,17 +131,19 @@
     "specs/007-windowless-supervision/spec.md#FR-002"
    ],
    "evidence": [
-    "Owner order 2026-10-27 22:50 ET: the tray icon must be the official Syncyard mark and must indicate connected or not, with a red slash suggested for offline; the running tray then showed the plain-dot fallback because the mark was loaded from an external file the old build did not have"
+    "Owner order 2026-10-27 22:50 ET: the tray icon must be the official Syncyard mark and must indicate connected or not, with a red slash suggested for offline; the running tray then showed the plain-dot fallback because the mark was loaded from an external file the old build did not have",
+    "Owner order 2026-10-27 23:12 ET: all-disconnected and all-connected must have clearly different indicators"
    ],
    "falsification_tests": [
     "The tray icon renders as a plain colored dot while the embedded mark resource is present in the program",
-    "With all runners stopped the icon shows no red slash; with some stopped it shows no amber slash; with all running it shows a slash or badge"
+    "With all runners stopped the icon shows no red slash; with some stopped it shows no amber slash; with all running it shows a slash or badge",
+    "With no runners up the icon still renders in full color"
    ],
    "id": "FR-007",
    "kind": "requirement",
    "source_ref": "specs/007-windowless-supervision/spec.md#FR-007",
    "status": "specified",
-   "text": "The tray icon is the official Syncyard mark loaded from an embedded resource: clean when all runners are up, amber slash when some are down, red slash when none are up or a runner is faulted."
+   "text": "The tray icon is the official Syncyard mark loaded from an embedded resource, in three glanceable states: full color and clean when all runners are up, color with an amber slash when some are down, and grayscale with a red slash when none are up or a runner is faulted."
   },
   {
    "boundary": [
