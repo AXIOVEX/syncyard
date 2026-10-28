@@ -12,8 +12,8 @@
 # per rolling hour; when the cap is hit it logs OWNER NEEDED and stops
 # restarting that runner until restarts age out of the window.
 #
-# Writes C:\actions-runner-watchdog\status.json and appends to
-# C:\actions-runner-watchdog\watchdog.log.
+# Writes C:\Users\trist\Development\Syncyard\watchdog\status.json and appends to
+# C:\Users\trist\Development\Syncyard\watchdog\watchdog.log.
 #
 # ASCII only (Windows PowerShell 5.1 mis-parses UTF-8-no-BOM scripts
 # containing non-ASCII characters - recorded fleet lesson).
@@ -22,13 +22,13 @@ $ErrorActionPreference = "Stop"
 
 # --- Config: one entry per runner registration on this machine. -------
 # Add the lane runner directories here at lane stand-up, e.g.
-# "C:\actions-runner-quick", "C:\actions-runner-normal",
-# "C:\actions-runner-gpu".
+# "C:\Users\trist\Development\Syncyard\runners\quick", "C:\Users\trist\Development\Syncyard\runners\normal",
+# "C:\Users\trist\Development\Syncyard\runners\gpu".
 $RunnerDirs = @(
-    "C:\actions-runner-desktop"
+    "C:\Users\trist\Development\Syncyard\runners\long"
 )
 
-$StatusDir       = "C:\actions-runner-watchdog"
+$StatusDir       = "C:\Users\trist\Development\Syncyard\watchdog"
 $StatusFile      = Join-Path $StatusDir "status.json"
 $LogFile         = Join-Path $StatusDir "watchdog.log"
 $RestartFile     = Join-Path $StatusDir "restarts.json"

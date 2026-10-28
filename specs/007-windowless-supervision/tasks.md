@@ -32,3 +32,9 @@
       package, macOS as launchd agents + menu-bar supervisor in a
       .pkg — only after T008 passes on Windows. Tracked in full
       under spec 008.
+- [ ] T010 — Runner directories live under the user profile, never in
+      the drive root (owner order 2026-10-27): the four registrations
+      move to `%USERPROFILE%\Development\Syncyard\runners\<lane>`,
+      the tray + watchdog defaults point there, the docs show the
+      layout, and the installer package is rebuilt and re-tested
+      against the new locations.

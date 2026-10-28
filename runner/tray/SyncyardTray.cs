@@ -102,10 +102,10 @@ namespace SyncyardTray
             }
             catch { _logoImage = null; }
 
-            _runners.Add(new RunnerDef { Lane = "long",   Dir = @"C:\actions-runner-desktop" });
-            _runners.Add(new RunnerDef { Lane = "quick",  Dir = @"C:\actions-runner-quick" });
-            _runners.Add(new RunnerDef { Lane = "normal", Dir = @"C:\actions-runner-normal" });
-            _runners.Add(new RunnerDef { Lane = "gpu",    Dir = @"C:\actions-runner-gpu" });
+            _runners.Add(new RunnerDef { Lane = "long",   Dir = @"C:\Users\trist\Development\Syncyard\runners\long" });
+            _runners.Add(new RunnerDef { Lane = "quick",  Dir = @"C:\Users\trist\Development\Syncyard\runners\quick" });
+            _runners.Add(new RunnerDef { Lane = "normal", Dir = @"C:\Users\trist\Development\Syncyard\runners\normal" });
+            _runners.Add(new RunnerDef { Lane = "gpu",    Dir = @"C:\Users\trist\Development\Syncyard\runners\gpu" });
 
             _icon = new NotifyIcon();
             _icon.Text = "Syncyard runners";
