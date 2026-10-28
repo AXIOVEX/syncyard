@@ -172,6 +172,10 @@ The runners run under the **Syncyard Tray** supervisor
   need his WSL distro, GPU, audio, and bench devices, which a Windows
   service in session 0 cannot reliably reach. Do not register the
   runners as services.
+- Runner directories live under the owner's profile at
+  `%USERPROFILE%\Development\Syncyard\runners\<lane>` — never in
+  the drive root. The tray's runner table points there; if the
+  directories move, update the tray and reinstall it.
 - Install or reinstall with `runner/tray/install-tray.ps1` in an
   owner session (compiles with the in-box csc; no SDK needed). The
   tray supervisor replaces the `runner-watchdog.ps1` scheduled task —

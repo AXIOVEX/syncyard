@@ -32,10 +32,10 @@ Four registrations, one directory each:
 
 | Lane | Runner name (example) | Directory | Extra label |
 |---|---|---|---|
-| quick | `desktop-quick` | `C:\actions-runner-quick` | `lane-quick` |
-| normal | `desktop-normal` | `C:\actions-runner-normal` | `lane-normal` |
-| long | `desktop-long` | `C:\actions-runner-long` | `lane-long` |
-| gpu | `desktop-gpu` | `C:\actions-runner-gpu` | `lane-gpu` |
+| quick | `desktop-quick` | `C:\Users\<you>\Development\Syncyard\runners\quick` | `lane-quick` |
+| normal | `desktop-normal` | `C:\Users\<you>\Development\Syncyard\runners\normal` | `lane-normal` |
+| long | `desktop-long` | `C:\Users\<you>\Development\Syncyard\runners\long` | `lane-long` |
+| gpu | `desktop-gpu` | `C:\Users\<you>\Development\Syncyard\runners\gpu` | `lane-gpu` |
 
 If the machine already has a runner from a previous setup, it becomes
 the **long** lane: re-register its existing directory under this
@@ -65,10 +65,10 @@ From this repository's checkout, in PowerShell on the machine, once per
 lane (substitute your token, names, and directories from step 1):
 
 ```powershell
-.\runner\setup-runner.ps1 -Name "desktop-quick"  -Labels "lane-quick"  -RunnerDir "C:\actions-runner-quick"  -RegistrationToken <token> -Start
-.\runner\setup-runner.ps1 -Name "desktop-normal" -Labels "lane-normal" -RunnerDir "C:\actions-runner-normal" -RegistrationToken <token> -Start
-.\runner\setup-runner.ps1 -Name "desktop-long"   -Labels "lane-long"   -RunnerDir "C:\actions-runner-long"   -RegistrationToken <token> -Start
-.\runner\setup-runner.ps1 -Name "desktop-gpu"    -Labels "lane-gpu"    -RunnerDir "C:\actions-runner-gpu"    -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "desktop-quick"  -Labels "lane-quick"  -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\quick"  -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "desktop-normal" -Labels "lane-normal" -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\normal" -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "desktop-long"   -Labels "lane-long"   -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\long"   -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "desktop-gpu"    -Labels "lane-gpu"    -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\gpu"    -RegistrationToken <token> -Start
 ```
 
 Each run downloads the pinned runner package, registers the runner to
@@ -148,7 +148,7 @@ until it passes.
   download when the package is already extracted.
 - **A runner shows offline.** Check its window first — most "offline"
   runners are a closed window. Start it again with
-  `& "C:\actions-runner-<lane>\run.cmd"`, and confirm the tray's
+  `& "C:\Users\<you>\Development\Syncyard\runners\<lane>\run.cmd"`, and confirm the tray's
   `status.json` sees the listener.
 - **Watchdog says OWNER NEEDED.** The restart cap tripped: the runner
   is dying repeatedly, which is a real fault, not a supervisor fault.

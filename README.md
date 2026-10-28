@@ -65,7 +65,7 @@ More detail, including how to report a vulnerability, is in [SECURITY.md](SECURI
 
 ```powershell
 gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .token
-.\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\actions-runner-quick" -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\quick" -RegistrationToken <token> -Start
 ```
 
 The full owner-session runbook — all four lanes, the tray supervisor install, and the per-lane identity proof — is [runner/SETUP.md](runner/SETUP.md).

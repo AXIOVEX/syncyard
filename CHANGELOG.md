@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Runner directories move under the user profile
+  (`%USERPROFILE%\Development\Syncyard\runners\<lane>`) — nothing
+  Syncyard-owned sits in the drive root. Tray and watchdog defaults
+  and the setup docs follow; the tray installer is rebuilt against
+  the new locations (spec 007 T010).
 - Spec 007 T007 — a real Windows installer for the tray:
   `SyncyardTray-Setup-0.1.0.exe` (NSIS; per-user, silent `/S` mode,
   registered uninstaller), published as a GitHub Release asset with
