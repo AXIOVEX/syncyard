@@ -32,6 +32,9 @@ $exe = Join-Path $InstallDir "SyncyardTray.exe"
 
 Write-Host "Fetching SyncyardTray.cs (ref $Ref)"
 Invoke-WebRequest "$repoRaw/SyncyardTray.cs" -OutFile $src
+Invoke-WebRequest "$repoRaw/logo.ico" -OutFile (Join-Path $InstallDir "logo.ico")
+$repoRoot = "https://raw.githubusercontent.com/AXIOVEX/syncyard/$Ref"
+Invoke-WebRequest "$repoRoot/assets/logo.png" -OutFile (Join-Path $InstallDir "logo.png")
 
 $csc = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path $csc)) {
@@ -41,6 +44,7 @@ if (-not (Test-Path $csc)) { throw "csc.exe not found - cannot compile." }
 
 Write-Host "Compiling with $csc"
 & $csc /nologo /target:winexe /out:$exe `
+    /win32icon:(Join-Path $InstallDir "logo.ico") `
     /reference:System.Windows.Forms.dll `
     /reference:System.Drawing.dll $src
 if ($LASTEXITCODE -ne 0) { throw "csc exited with code $LASTEXITCODE" }

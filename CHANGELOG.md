@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Spec 007 T007 — a real Windows installer for the tray:
+  `SyncyardTray-Setup-0.1.0.exe` (NSIS; per-user, silent `/S` mode,
+  registered uninstaller), published as a GitHub Release asset with
+  a SHA-256, plus `assets/logo.ico` and the tray icon now carrying
+  the project mark with a state badge. README and SETUP.md document
+  the download route and manual from-source installation.
 - Spec 007 — windowless runner supervision: the Syncyard Tray app
   (`runner/tray/SyncyardTray.cs` + `install-tray.ps1`) supervises the
   runners from the owner's tray — hidden starts, per-lane state,

@@ -68,7 +68,9 @@ gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .t
 .\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\actions-runner-quick" -RegistrationToken <token> -Start
 ```
 
-The full owner-session runbook — all four lanes, the watchdog install, and the per-lane identity proof — is [runner/SETUP.md](runner/SETUP.md).
+The full owner-session runbook — all four lanes, the tray supervisor install, and the per-lane identity proof — is [runner/SETUP.md](runner/SETUP.md).
+
+**Supervise the runners windowlessly** with the Syncyard Tray: download `SyncyardTray-Setup-0.1.0.exe` from [Releases](https://github.com/AXIOVEX/syncyard/releases), run it (per-user, no admin), and the runners start hidden under a tray icon that shows per-lane state and restarts a dead runner. Manual from-source installation is covered in [runner/SETUP.md](runner/SETUP.md) step 4.
 
 **2. Submit a job** through the gatekeeper from the operator machine:
 
