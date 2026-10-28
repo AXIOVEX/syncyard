@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- Gatekeeper FR-012 refinement (same night): the failed-write
+  cleanup removes only content that is not a valid record (0-byte
+  or partial husks); a failed UPDATE leaves the last valid record
+  standing and fails loudly. The first cleanup compared bytes and
+  deleted a live record on a failed dispatch update - found and
+  fixed under the pause-first fix discipline.
 - Gatekeeper durable writes (spec 001 FR-012): every queue, ledger
   and control-file write is now write-verify-retry — unbuffered
   write, read-back byte verification, bounded retries with backoff,
