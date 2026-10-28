@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""gk.py - Syncyard gatekeeper: the single dispatch/watch door for the
-AXIOVEX/syncyard self-hosted runner fleet.
+"""gk.py - Desktop Access gatekeeper: the single dispatch/watch door for the
+tbitcs/desktop-runner self-hosted runner fleet.
 
-Implements the Syncyard fleet standard (docs/STANDARD.md, Parts 2 and 4):
+Implements the fleet standard (github-polling-census-and-standard-2026-10-27,
+Parts 2 and 4):
   - one watcher (this tool, via a 5-minute cron sweep), batched reads
   - gh api rate_limit headroom check before any dispatch; hard stand-down
     below 1,000 core remaining, completion-critical only below 500
@@ -35,8 +36,15 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 QUEUE_DIR = os.path.join(BASE, "queue")
 LEDGER = os.path.join(BASE, "ledger.jsonl")
 LOCK_DIR = os.path.join(BASE, ".sweep.lock")
+PAUSE_FILE = os.path.join(BASE, "PAUSED.json")
+STOP_FILE = os.path.join(BASE, "STOPPED.json")
+OUTBOX_CURSOR = os.path.join(BASE, "outbox-cursor.json")
+LANES_LIVE_FILE = os.path.join(BASE, "LANES_LIVE")
 
-REPO = "AXIOVEX/syncyard"
+REPO = "tbitcs/desktop-runner"
+PROJECT_REPO = "AXIOVEX/syncyard"   # canonical project repo (status --repo)
+HLOG = os.path.join(BASE, "gatekeeper.log")   # human-readable rotating log
+HLOG_MAX_BYTES = 1000000
 
 # --- Config constants (edit here, nowhere else) ---------------------------
 MAX_ACTIVE_DISPATCHED = 2        # total gatekeeper-active runs cap, pre-lanes
@@ -93,11 +101,84 @@ def minutes_between(a, b):
     return (b - a).total_seconds() / 60.0
 
 
+def hlog(msg):
+    """Append one line to the human-readable gatekeeper log, rotating at
+    HLOG_MAX_BYTES (one backup kept). Best-effort by design: a logging
+    failure must never break a sweep, so every error is swallowed."""
+    try:
+        if os.path.isfile(HLOG) and os.path.getsize(HLOG) > HLOG_MAX_BYTES:
+            os.replace(HLOG, HLOG + ".1")
+        with open(HLOG, "a", encoding="utf-8") as f:
+            f.write("%s %s\n" % (now_iso(), msg))
+    except OSError:
+        pass
+
+
+def _write_verified_bytes(path, data, attempts=8):
+    """WRITE-VERIFY-RETRY (spec 001 FR-012): write data to path with
+    unbuffered syscalls, fsync, then READ BACK and byte-compare.
+    Retries with backoff (0.25s doubling, capped at 8s). Returns True
+    only when the bytes on disk are exactly the bytes given - the VM
+    write restriction can drop a buffered write silently and leave a
+    0-byte file standing, so an unverified success is never trusted.
+    Returns False after the bounded retries are exhausted."""
+    for i in range(attempts):
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                         0o644)
+            try:
+                view = memoryview(data)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            with open(path, "rb") as f:
+                back = f.read()
+            if back == data and len(back) > 0:
+                return True
+        except OSError:
+            pass
+        if i + 1 < attempts:
+            time.sleep(min(0.25 * (2 ** i), 8.0))
+    return False
+
+
+def _append_verified(path, line, attempts=8):
+    """Append one line and verify it landed (file size grows by
+    exactly len(line)); same retry discipline as
+    _write_verified_bytes. Returns True only when verified."""
+    data = line.encode("utf-8")
+    for i in range(attempts):
+        try:
+            before = os.path.getsize(path) if os.path.isfile(path) else 0
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND,
+                         0o644)
+            try:
+                view = memoryview(data)
+                while view:
+                    n = os.write(fd, view)
+                    view = view[n:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            if os.path.getsize(path) == before + len(data):
+                return True
+        except OSError:
+            pass
+        if i + 1 < attempts:
+            time.sleep(min(0.25 * (2 ** i), 8.0))
+    return False
+
+
 def ledger(event, **kw):
     rec = {"ts": now_iso(), "event": event}
     rec.update(kw)
-    with open(LEDGER, "a", encoding="utf-8") as f:
-        f.write(json.dumps(rec, sort_keys=True) + "\n")
+    line = json.dumps(rec, sort_keys=True) + "\n"
+    if not _append_verified(LEDGER, line):
+        raise IOError("ledger append could not be verified after "
+                      "retries: %s" % event)
     return rec
 
 
@@ -105,18 +186,325 @@ def job_path(job_id):
     return os.path.join(QUEUE_DIR, job_id + ".json")
 
 
-def save_job(job):
-    fd, tmp = tempfile.mkstemp(dir=QUEUE_DIR, suffix=".tmp")
+def pause_state():
+    """The pause record, or None when not paused. The file's mere
+    existence means paused (a corrupt record still pauses — the
+    operator's intent is the safe side)."""
+    if not os.path.isfile(PAUSE_FILE):
+        return None
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(job, f, indent=2, sort_keys=True)
-        os.replace(tmp, job_path(job["id"]))
-    except BaseException:
+        with open(PAUSE_FILE, encoding="utf-8") as f:
+            rec = json.load(f)
+        return rec if isinstance(rec, dict) else {"ts": None, "reason": ""}
+    except (OSError, ValueError):
+        return {"ts": None, "reason": ""}
+
+
+def _write_text_file(path, text):
+    """Write a small text file through the write-verify-retry path
+    (spec 001 FR-012). Raises IOError when the write cannot be
+    verified - a pause/stop record that silently did not land is a
+    safety failure, not a soft one."""
+    if not _write_verified_bytes(path, text.encode("utf-8")):
+        raise IOError("could not write verified file: %s" % path)
+
+
+def cmd_pause(args):
+    cur = pause_state()
+    if cur is not None:
+        print("ALREADY PAUSED since %s reason=%s"
+              % (cur.get("ts"), cur.get("reason") or ""))
+        return 0
+    rec = {"ts": now_iso(), "reason": args.reason or ""}
+    try:
+        _write_text_file(PAUSE_FILE,
+                         json.dumps(rec, indent=2, sort_keys=True))
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("ERROR: could not write the pause file (%s). The pause is "
+              "NOT in effect." % exc)
+        return 1
+    ledger("paused", reason=rec["reason"])
+    hlog("PAUSED at %s reason=%s" % (rec["ts"], rec["reason"]))
+    print("PAUSED at %s — dispatch of program jobs is held; "
+          "maintenance jobs still dispatch; the watch pass continues."
+          % rec["ts"])
+    return 0
+
+
+def cmd_resume(_args):
+    if pause_state() is None:
+        print("NOT PAUSED")
+        return 0
+    try:
+        os.unlink(PAUSE_FILE)
+    except OSError:
+        subprocess.run(["/bin/sh", "-c", 'rm -f "$1"', "sh", PAUSE_FILE],
+                       check=True)
+    ledger("resumed")
+    hlog("RESUMED at %s" % now_iso())
+    print("RESUMED — dispatch is flowing again.")
+    return 0
+
+
+def stop_state():
+    """The stop record, or None when not stopped. Like the pause, the
+    file's mere existence means stopped."""
+    if not os.path.isfile(STOP_FILE):
+        return None
+    try:
+        with open(STOP_FILE, encoding="utf-8") as f:
+            rec = json.load(f)
+        return rec if isinstance(rec, dict) else {"ts": None, "reason": ""}
+    except (OSError, ValueError):
+        return {"ts": None, "reason": ""}
+
+
+def _clear_marker(path):
+    try:
+        os.unlink(path)
+    except OSError:
+        subprocess.run(["/bin/sh", "-c", 'rm -f "$1"', "sh", path],
+                       check=True)
+
+
+def cmd_start(_args):
+    """Start: clear any stop and any pause — fully running."""
+    cleared = []
+    for path, name in ((STOP_FILE, "stop"), (PAUSE_FILE, "pause")):
+        if os.path.isfile(path):
+            _clear_marker(path)
+            cleared.append(name)
+    if not cleared:
+        print("ALREADY RUNNING (no stop or pause in effect)")
+        return 0
+    ledger("started", cleared=cleared)
+    hlog("STARTED at %s (cleared: %s)" % (now_iso(), ", ".join(cleared)))
+    print("RUNNING — cleared %s. Dispatch and watch are live."
+          % " + ".join(cleared))
+    return 0
+
+
+def cmd_stop(args):
+    """Stop: the hard halt. Sweeps no-op (no budget spent, no watch,
+    no dispatch) until `gk start`. Stronger than pause; jobs already
+    dispatched are untouched, as always."""
+    cur = stop_state()
+    if cur is not None:
+        print("ALREADY STOPPED since %s reason=%s"
+              % (cur.get("ts"), cur.get("reason") or ""))
+        return 0
+    rec = {"ts": now_iso(), "reason": args.reason or ""}
+    try:
+        _write_text_file(STOP_FILE,
+                         json.dumps(rec, indent=2, sort_keys=True))
+    except (OSError, subprocess.SubprocessError) as exc:
+        print("ERROR: could not write the stop file (%s). The stop is "
+              "NOT in effect." % exc)
+        return 1
+    ledger("stopped", reason=rec["reason"])
+    hlog("STOPPED at %s reason=%s" % (rec["ts"], rec["reason"]))
+    print("STOPPED at %s — sweeps will no-op until `gk start`."
+          % rec["ts"])
+    return 0
+
+
+def cmd_purge(args):
+    """Purge housekeeping: remove terminal (completed/cancelled) job
+    records, optionally only those older than N days from creation,
+    and optionally archive the ledger to a fresh one. DRY RUN unless
+    --yes. Active and submitted records are never touched."""
+    jobs = load_jobs()
+    targets = []
+    for j in jobs:
+        if j["state"] not in ("completed", "cancelled"):
+            continue
+        if args.older_than_days is not None:
+            created = parse_iso(j.get("created_at"))
+            age_min = minutes_between(created, now_dt())
+            if age_min is None or age_min < args.older_than_days * 1440:
+                continue
+        targets.append(j)
+    verb = "purged" if args.yes else "would purge"
+    for j in targets:
+        print("  %s %s key=%s state=%s"
+              % (verb, j["id"], j["key"], j["state"]))
+    if args.ledger:
+        print("  %s the ledger (archive ledger.jsonl, start fresh)"
+              % verb)
+    if not targets and not args.ledger:
+        print("PURGE: nothing matches (terminal states: completed, "
+              "cancelled%s)"
+              % ("" if args.older_than_days is None
+                 else "; older than %s day(s) from creation"
+                      % args.older_than_days))
+        return 0
+    if not args.yes:
+        print("DRY RUN — nothing deleted. Re-run with --yes to purge "
+              "%d job record(s)%s."
+              % (len(targets), " and archive the ledger" if args.ledger
+                 else ""))
+        return 0
+    removed = 0
+    for j in targets:
+        _clear_marker(os.path.join(QUEUE_DIR, j["id"] + ".json"))
+        removed += 1
+    archived = False
+    if args.ledger and os.path.isfile(LEDGER):
+        stamp = now_iso().replace(":", "").replace("-", "")
+        dest = os.path.join(BASE, "ledger-archived-%s.jsonl" % stamp)
+        os.replace(LEDGER, dest)
+        open(LEDGER, "a", encoding="utf-8").close()
+        archived = True
+        print("  ledger archived to %s" % os.path.basename(dest))
+    ledger("purged", jobs=removed, ledger_archived=archived)
+    hlog("PURGED %d job record(s) at %s" % (removed, now_iso()))
+    print("PURGED %d job record(s)%s."
+          % (removed, "; ledger archived" if archived else ""))
+    return 0
+
+
+def cmd_outbox(args):
+    """Push-notification outbox. Reads ledger events past the stored
+    cursor and prints, grouped by each job's notify_chat, the pushes
+    owed: STARTED (with the job's expected length), COMPLETED
+    (conclusion plus verdict highlights from the job's harvested
+    markers), ESCALATED (W2 watermark). The cursor starts at the
+    current ledger end the first time — history is never replayed.
+    --ack advances the cursor once the caller has delivered the
+    pushes; delivery itself is the caller's act (the coordination
+    chat forwards each group into the named chat)."""
+    try:
+        with open(LEDGER, encoding="utf-8") as f:
+            lines = f.readlines()
+    except OSError:
+        lines = []
+    cursor = None
+    if os.path.isfile(OUTBOX_CURSOR):
+        try:
+            with open(OUTBOX_CURSOR, encoding="utf-8") as f:
+                cursor = int(json.load(f)["line"])
+        except (OSError, ValueError, KeyError, TypeError):
+            cursor = None
+    if cursor is None:
+        _write_text_file(OUTBOX_CURSOR, json.dumps({"line": len(lines)}))
+        print("OUTBOX initialized at line %d (history not replayed)"
+              % len(lines))
+        return 0
+    if args.ack:
+        _write_text_file(OUTBOX_CURSOR, json.dumps({"line": len(lines)}))
+        print("OUTBOX ACK line=%d" % len(lines))
+        return 0
+    jobs = {j["id"]: j for j in load_jobs()}
+    groups = {}
+    for raw in lines[cursor:]:
+        try:
+            ev = json.loads(raw)
+        except ValueError:
+            continue
+        job = jobs.get(ev.get("job_id") or "")
+        if not job or not job.get("notify_chat"):
+            continue
+        head = "[%s] %s" % (job["program"], job["key"])
+        msg = None
+        if (ev.get("event") == "state_change"
+                and ev.get("to_status") == "in_progress"):
+            exp = job.get("expected_min")
+            msg = "%s STARTED run %s%s" % (
+                head, ev.get("run_id"),
+                (" expected ~%g min" % exp) if exp else "")
+        elif (ev.get("event") == "state_change"
+                and ev.get("to_status") == "completed"):
+            marks = job.get("markers") or []
+            hl = [m for m in marks if ("RESULT" in m or "VERDICT" in m)][:3]
+            msg = "%s COMPLETED run %s conclusion=%s markers=%d%s" % (
+                head, ev.get("run_id"), ev.get("conclusion") or "?",
+                len(marks),
+                (" | " + " ;; ".join(hl)) if hl
+                else (" | verdict pending harvest" if not marks else ""))
+        elif (ev.get("event") == "watermark_escalation"
+                and ev.get("level") == "W2"):
+            msg = "%s ESCALATED W2 %s run %s age=%s min" % (
+                head, ev.get("classification"), ev.get("run_id"),
+                ev.get("age_min"))
+        if msg:
+            groups.setdefault(job["notify_chat"], []).append(msg)
+    if not groups:
+        print("OUTBOX empty")
+        return 0
+    for chat in sorted(groups):
+        print("NOTIFY %s" % chat)
+        for msg in groups[chat]:
+            print("  %s" % msg)
+    return 0
+
+
+def _record_bytes_valid(data):
+    """True when data is a non-empty JSON record. Used by save_job's
+    failure cleanup to tell a valid older record (leave standing)
+    from a 0-byte/partial husk (remove)."""
+    if not data:
+        return False
+    try:
+        json.loads(data.decode("utf-8"))
+        return True
+    except (ValueError, UnicodeDecodeError):
+        return False
+
+
+def save_job(job):
+    """Persist a job record under WRITE-VERIFY-RETRY (spec 001
+    FR-012): the payload is written to a unique temp file and read
+    back byte-for-byte before it is moved into place; if the move
+    itself is refused, the payload is written directly to the final
+    path and verified there. Raises IOError when no verified write
+    lands - callers must never treat an unverified save as done, and
+    a 0-byte or partial file is never left standing as the record."""
+    payload = json.dumps(job, indent=2, sort_keys=True).encode("utf-8")
+    final = job_path(job["id"])
+    tmp = os.path.join(QUEUE_DIR, ".%s.%d.tmp"
+                       % (job["id"], os.getpid()))
+    try:
+        if _write_verified_bytes(tmp, payload):
+            for i in range(8):
+                try:
+                    os.replace(tmp, final)
+                    with open(final, "rb") as f:
+                        if f.read() == payload:
+                            return
+                except OSError:
+                    pass
+                if i + 1 < 8:
+                    time.sleep(min(0.25 * (2 ** i), 8.0))
+        # The move would not land (or the temp write never verified):
+        # write the final path directly and verify it there.
+        if _write_verified_bytes(final, payload):
+            return
+        # Nothing verified. Remove the file ONLY when what stands
+        # there is not a valid record at all (a 0-byte or partial
+        # husk from a first write). When it holds a valid OLDER
+        # record - the normal case for a state update - leave it
+        # standing: the update failed loudly, the old state is the
+        # truth on disk, and the next pass retries the update.
+        # (First version of this cleanup deleted a live record on a
+        # failed dispatch update, 2026-10-27 23:53 ET - the check
+        # compared bytes instead of validity.)
+        try:
+            with open(final, "rb") as f:
+                current = f.read()
+            if not _record_bytes_valid(current):
+                os.unlink(final)
+                print("ERROR: removed unverifiable husk for job "
+                      "%s; the record must be resubmitted"
+                      % job["id"], file=sys.stderr)
+        except OSError:
+            pass
+        raise IOError("save_job could not verify a write for job %s"
+                      % job["id"])
+    finally:
         try:
             os.unlink(tmp)
         except OSError:
             pass
-        raise
 
 
 def load_jobs():
@@ -125,8 +513,16 @@ def load_jobs():
         return jobs
     for name in sorted(os.listdir(QUEUE_DIR)):
         if name.endswith(".json"):
-            with open(os.path.join(QUEUE_DIR, name), encoding="utf-8") as f:
-                jobs.append(json.load(f))
+            try:
+                with open(os.path.join(QUEUE_DIR, name),
+                          encoding="utf-8") as f:
+                    jobs.append(json.load(f))
+            except (OSError, ValueError) as e:
+                # A 0-byte or partial record (the silent-drop write
+                # mode) must not crash every command or pose as a
+                # job: skip it loudly (spec 001 FR-012).
+                print("WARNING: skipping unreadable job file %s: %s"
+                      % (name, e), file=sys.stderr)
     return jobs
 
 
@@ -217,6 +613,8 @@ def cmd_submit(args):
         "verdict_source": None,
         "watermarks": {},
         "flags": [],
+        "maintenance": bool(getattr(args, "maintenance", False)),
+        "notify_chat": getattr(args, "notify_chat", None),
     }
     if args.workflow == "grab.yml":
         if not args.grab_path:
@@ -239,6 +637,14 @@ def cmd_submit(args):
     ledger("submitted", job_id=job["id"], key=job["key"],
            program=job["program"], workflow=job["workflow"],
            lane=job["lane"], script_sha256=job["script_sha256"])
+    # FR-012: a submission is only reported queued after the loader
+    # reads back the exact record that was written.
+    landed = find_active(load_jobs(), key=job["key"])
+    if (landed is None or landed["id"] != job["id"]
+            or landed.get("script_sha256") != job["script_sha256"]):
+        print("ERROR: submission %s did not verify on read-back; "
+              "it is NOT queued" % job["id"])
+        return 4
     print("SUBMITTED %s key=%s program=%s workflow=%s lane=%s"
           % (job["id"], job["key"], job["program"], job["workflow"],
              job["lane"]))
@@ -276,6 +682,7 @@ def cmd_adopt(args):
         "verdict_source": None,
         "watermarks": {},
         "flags": [],
+        "notify_chat": getattr(args, "notify_chat", None),
     }
     save_job(job)
     ledger("adopted", job_id=job["id"], key=job["key"],
@@ -346,14 +753,17 @@ def dispatch_one(job, jobs):
     ledger("dispatching", job_id=job["id"], key=job["key"],
            workflow=job["workflow"], lane=job["lane"])
     before = now_iso()
+    lane_label = "lane-" + job["lane"]
     if job["workflow"] == "grab.yml":
         gh_args = ["workflow", "run", "grab.yml", "-R", REPO,
-                   "-f", "path=" + job["grab_path"]]
+                   "-f", "path=" + job["grab_path"],
+                   "-f", "lane=" + lane_label]
     else:
         with open(job["script_path"], "rb") as f:
             payload = base64.b64encode(f.read()).decode("ascii")
         gh_args = ["workflow", "run", job["workflow"], "-R", REPO,
-                   "-f", "cmd_b64=" + payload]
+                   "-f", "cmd_b64=" + payload,
+                   "-f", "lane=" + lane_label]
         if job.get("cwd"):
             gh_args += ["-f", "cwd=" + job["cwd"]]
     rc, out, err = run_cmd(["gh"] + gh_args, timeout=60)
@@ -418,12 +828,18 @@ def dispatch_pass(jobs, runs_by_id):
                    if j.get("script_sha256")}
     waiting = sorted([j for j in jobs if j["state"] == "submitted"],
                      key=lambda j: j["created_at"])
+    paused = (pause_state() is not None or stop_state() is not None)
+    lanes_live = os.path.isfile(LANES_LIVE_FILE)
     for job in waiting:
-        if active_count >= MAX_ACTIVE_DISPATCHED:
+        maint = bool(job.get("maintenance"))
+        if paused and not maint:
+            continue  # paused: program work holds; maintenance flows
+        if not lanes_live and active_count >= MAX_ACTIVE_DISPATCHED \
+                and not maint:
             ledger("dispatch_deferred_cap", job_id=job["id"], key=job["key"],
                    active=active_count, cap=MAX_ACTIVE_DISPATCHED)
             continue
-        if job["lane"] in held_lanes:
+        if job["lane"] in held_lanes and not maint:
             continue  # lane serialization: another job of this class is live
         if (job["workflow"], job.get("script_sha256")) in held_hashes:
             ledger("dispatch_skipped_duplicate", job_id=job["id"],
@@ -467,10 +883,40 @@ def extract_log_lines(raw):
     return lines
 
 
+def fetch_log_archive(run_id):
+    """Fallback log source: the REST logs archive (a zip of per-step text
+    files). Some runs' logs cannot be read by `gh run view --log` at all
+    (observed 2026-10-27, run 40512763692: --log failed on every attempt
+    while the archive read fine). Returns combined text or None."""
+    import io
+    import zipfile
+    try:
+        p = subprocess.run(
+            ["gh", "api", "repos/%s/actions/runs/%s/logs" % (REPO, run_id)],
+            capture_output=True, timeout=180)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if p.returncode != 0 or not p.stdout:
+        return None
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(p.stdout))
+    except zipfile.BadZipFile:
+        return None
+    chunks = []
+    for name in sorted(zf.namelist()):
+        if name.endswith(".txt"):
+            chunks.append(zf.read(name).decode("utf-8", "replace"))
+    return "\n".join(chunks) if chunks else None
+
+
 def fetch_log_once(job):
     rc, out, err = run_cmd(["gh", "run", "view", str(job["run_id"]), "-R",
                             REPO, "--log"], timeout=180)
+    via = "gh-log"
     if rc != 0 or not out:
+        out = fetch_log_archive(job["run_id"])
+        via = "api-archive"
+    if not out:
         job["log_pending"] = True
         ledger("log_fetch_failed", job_id=job["id"], key=job["key"],
                run_id=job["run_id"], rc=rc)
@@ -480,10 +926,11 @@ def fetch_log_once(job):
     job["markers"] = [ln for ln in lines if MARKER_RE.match(ln.strip())]
     job["log_fetched_at"] = now_iso()
     job["log_pending"] = False
+    job["log_source"] = via
     job["verdict_source"] = "markers"
     ledger("log_harvested", job_id=job["id"], key=job["key"],
            run_id=job["run_id"], markers=len(job["markers"]),
-           log_lines=len(lines))
+           log_lines=len(lines), via=via)
     return True
 
 
@@ -630,6 +1077,13 @@ def cmd_sweep(_args):
         print("SWEEP skipped: another sweep holds the lock")
         return 0
     try:
+        stopped = stop_state()
+        if stopped is not None:
+            print("SWEEP %s STOPPED since %s (%s) — nothing spent, "
+                  "nothing watched, nothing dispatched"
+                  % (now_iso(), stopped.get("ts"),
+                     stopped.get("reason") or "no reason recorded"))
+            return 0
         remaining, err = rate_limit_remaining()
         if err:
             ledger("api_error", where="rate_limit", error=err)
@@ -640,6 +1094,8 @@ def cmd_sweep(_args):
             ledger("budget_critical", remaining=remaining)
             print("SWEEP budget_remaining=%d CRITICAL: no dispatch, no "
                   "watch calls" % remaining)
+            hlog("SWEEP budget_remaining=%d CRITICAL: no dispatch, no "
+                 "watch calls" % remaining)
             return 0
         standdown = remaining < STANDDOWN_REMAINING
         if standdown:
@@ -662,11 +1118,14 @@ def cmd_sweep(_args):
                       if j["state"] in RUN_HOLDING_STATES
                       and j.get("run_status") != "completed"])
         waiting = len([j for j in load_jobs() if j["state"] == "submitted"])
-        print("SWEEP %s budget_remaining=%d%s dispatched=%d changes=%d "
-              "breaches=%d active=%d waiting=%d"
-              % (now_iso(), remaining,
-                 " STANDDOWN" if standdown else "", dispatched, changes,
-                 breaches, active, waiting))
+        summary = ("SWEEP %s budget_remaining=%d%s%s dispatched=%d "
+                   "changes=%d breaches=%d active=%d waiting=%d"
+                   % (now_iso(), remaining,
+                      " STANDDOWN" if standdown else "",
+                      " PAUSED" if pause_state() is not None else "",
+                      dispatched, changes, breaches, active, waiting))
+        print(summary)
+        hlog(summary)
         return 0
     finally:
         try:
@@ -677,14 +1136,102 @@ def cmd_sweep(_args):
 
 # --- status ------------------------------------------------------------------
 
-def cmd_status(_args):
+def job_issues(j):
+    """One job's current issue list, derived from its saved state only."""
+    out = []
+    for fl in j.get("flags", []):
+        if fl.startswith("watermark"):
+            out.append(fl.replace("_", " "))
+    if j.get("log_pending"):
+        out.append("log harvest failed/pending (verdict not yet readable)")
+    if j["state"] == "dispatching":
+        out.append("dispatch in progress (stale-dispatching is flagged "
+                   "for a human, never auto-redispatched)")
+    if j["state"] == "completed" and j.get("run_conclusion") not in (
+            None, "success") and not j.get("markers"):
+        out.append("completed with conclusion=%s and no markers"
+                   % j.get("run_conclusion"))
+    if j["state"] == "completed" and j.get("run_conclusion") == "success" \
+            and j.get("verdict_source") != "markers":
+        out.append("completed successfully but no marker verdict harvested")
+    return out
+
+
+def repo_health():
+    """Project-repo health for `status --repo`: latest CI runs on main,
+    open Dependabot alerts, and open Dependabot pull requests. Three API
+    calls, made only when the flag is passed (never in the default
+    local-only status). Failures degrade to an 'unavailable' line."""
+    print("\nrepo health (%s):" % PROJECT_REPO)
+    rc, out, _ = run_cmd(["gh", "run", "list", "-R", PROJECT_REPO, "-L", "3",
+                          "--json", "workflowName,status,conclusion,"
+                          "createdAt"], timeout=60)
+    if rc == 0 and out:
+        try:
+            for r in json.loads(out):
+                print("  CI %-10s %-12s %s (%s)"
+                      % (r.get("workflowName"), r.get("status"),
+                         r.get("conclusion") or "-", r.get("createdAt")))
+        except ValueError:
+            print("  CI unavailable (unparsable response)")
+    else:
+        print("  CI unavailable")
+    rc, out, _ = run_cmd(["gh", "api", "repos/%s/dependabot/alerts"
+                          "?state=open&per_page=30" % PROJECT_REPO],
+                         timeout=60)
+    if rc == 0 and out is not None:
+        try:
+            alerts = json.loads(out or "[]")
+            if alerts:
+                for a in alerts:
+                    adv = a.get("security_advisory") or {}
+                    print("  DEPENDABOT ALERT #%s %s (%s)"
+                          % (a.get("number"), adv.get("summary", "?"),
+                             adv.get("severity", "?")))
+            else:
+                print("  dependabot alerts: none open")
+        except ValueError:
+            print("  dependabot alerts: unavailable (unparsable response)")
+    else:
+        print("  dependabot alerts: unavailable")
+    rc, out, _ = run_cmd(["gh", "pr", "list", "-R", PROJECT_REPO,
+                          "--author", "app/dependabot", "--json",
+                          "number,title"], timeout=60)
+    if rc == 0 and out:
+        try:
+            prs = json.loads(out)
+            for pr in prs:
+                print("  DEPENDABOT PR #%s %s" % (pr.get("number"),
+                                                  pr.get("title")))
+            if not prs:
+                print("  dependabot PRs: none open")
+        except ValueError:
+            print("  dependabot PRs: unavailable (unparsable response)")
+    else:
+        print("  dependabot PRs: unavailable")
+
+
+def cmd_status(args):
     jobs = load_jobs()
     by_state = {}
     for j in jobs:
         by_state[j["state"]] = by_state.get(j["state"], 0) + 1
     print("GATEKEEPER STATUS %s" % now_iso())
+    st = stop_state()
+    if st is not None:
+        print("!! STOPPED since %s — %s (sweeps no-op until `gk start`)"
+              % (st.get("ts"), st.get("reason") or "no reason recorded"))
+    ps = pause_state()
+    if ps is not None:
+        print("!! PAUSED since %s — %s (program dispatch held; "
+              "maintenance jobs still flow)"
+              % (ps.get("ts"), ps.get("reason") or "no reason recorded"))
     print("jobs by state: %s" % (", ".join(
         "%s=%d" % (k, by_state[k]) for k in sorted(by_state)) or "none"))
+    queued = [j for j in jobs if j.get("run_status") == "queued"
+              or j["state"] in ("submitted", "dispatched")]
+    running = [j for j in jobs if j.get("run_status") == "in_progress"]
+    print("queued: %d   running: %d" % (len(queued), len(running)))
     print("")
     print("%-46s %-16s %-7s %-11s %-12s %s" % ("KEY", "PROGRAM", "LANE",
                                                "STATE", "RUN_STATUS",
@@ -704,6 +1251,12 @@ def cmd_status(_args):
                   % (j["key"], j.get("run_id"), j.get("run_conclusion"),
                      j.get("verdict_source"),
                      len(j.get("markers", []))))
+    issues = [(j, job_issues(j)) for j in jobs]
+    issues = [(j, i) for (j, i) in issues if i]
+    print("\nISSUES: %d" % len(issues))
+    for j, iss in issues:
+        for s in iss:
+            print("  [%s] %s — %s" % (j["program"], j["key"], s))
     if os.path.isfile(LEDGER):
         with open(LEDGER, encoding="utf-8") as f:
             lines = [ln for ln in f.read().splitlines() if ln.strip()]
@@ -716,6 +1269,8 @@ def cmd_status(_args):
                                          or ""))
             except ValueError:
                 print("  " + ln)
+    if getattr(args, "repo", False):
+        repo_health()
     return 0
 
 
@@ -734,7 +1289,44 @@ def main(argv=None):
     p.add_argument("--cwd")
     p.add_argument("--expected-min", type=float)
     p.add_argument("--key", required=True)
+    p.add_argument("--maintenance", action="store_true",
+                   help="operator maintenance job: dispatches even while "
+                        "paused, bypassing the active cap and lane "
+                        "serialization (never the duplicate check)")
+    p.add_argument("--notify-chat", default=None,
+                   help="chat id to push started/completed/escalated "
+                        "updates for this job to (see `gk outbox`)")
     p.set_defaults(fn=cmd_submit)
+
+    p = sub.add_parser("pause")
+    p.add_argument("--reason", default="")
+    p.set_defaults(fn=cmd_pause)
+
+    p = sub.add_parser("resume")
+    p.set_defaults(fn=cmd_resume)
+
+    p = sub.add_parser("start")
+    p.set_defaults(fn=cmd_start)
+
+    p = sub.add_parser("stop")
+    p.add_argument("--reason", default="")
+    p.set_defaults(fn=cmd_stop)
+
+    p = sub.add_parser("purge")
+    p.add_argument("--older-than-days", type=float, default=None,
+                   help="only purge terminal records created more than "
+                        "N days ago (default: all terminal records)")
+    p.add_argument("--ledger", action="store_true",
+                   help="also archive ledger.jsonl and start a fresh one")
+    p.add_argument("--yes", action="store_true",
+                   help="actually delete (default is a dry run)")
+    p.set_defaults(fn=cmd_purge)
+
+    p = sub.add_parser("outbox")
+    p.add_argument("--ack", action="store_true",
+                   help="advance the outbox cursor to the current "
+                        "ledger end (after the pushes are delivered)")
+    p.set_defaults(fn=cmd_outbox)
 
     p = sub.add_parser("adopt")
     p.add_argument("--run-id", required=True)
@@ -743,6 +1335,9 @@ def main(argv=None):
     p.add_argument("--lane", required=True, choices=LANES)
     p.add_argument("--expected-min", type=float)
     p.add_argument("--key", required=True)
+    p.add_argument("--notify-chat", default=None,
+                   help="chat id to push started/completed/escalated "
+                        "updates for this job to (see `gk outbox`)")
     p.set_defaults(fn=cmd_adopt)
 
     p = sub.add_parser("cancel")
@@ -753,6 +1348,8 @@ def main(argv=None):
     p.set_defaults(fn=cmd_sweep)
 
     p = sub.add_parser("status")
+    p.add_argument("--repo", action="store_true",
+                   help="also show project-repo CI + Dependabot health")
     p.set_defaults(fn=cmd_status)
 
     args = ap.parse_args(argv)

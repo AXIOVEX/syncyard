@@ -1,10 +1,13 @@
 <p align="center">
-  <img src="assets/logo.png" alt="Syncyard logo" width="180">
+  <img src="assets/logo.svg" alt="Syncyard logo" width="180">
 </p>
 
 # Syncyard
 
 **Synchronized, gated dispatch to your own machines: self-hosted CPU/GPU runner lanes plus an API-budget gatekeeper for agent workflows.**
+
+[![CI](https://github.com/AXIOVEX/syncyard/actions/workflows/ci.yml/badge.svg)](https://github.com/AXIOVEX/syncyard/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/AXIOVEX/syncyard)](https://github.com/AXIOVEX/syncyard/releases)
 
 A marshalling yard sorts work onto parallel tracks so everything moves in order instead of colliding. Syncyard does that for a fleet of AI agents and automation programs running jobs on your own computers: independent CPU and GPU runners stay synchronized through one checkpoint, every job is counted against a shared API budget, and each job travels a lane sized for it.
 
@@ -62,10 +65,12 @@ More detail, including how to report a vulnerability, is in [SECURITY.md](SECURI
 
 ```powershell
 gh api -X POST repos/AXIOVEX/syncyard/actions/runners/registration-token --jq .token
-.\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\actions-runner-quick" -RegistrationToken <token> -Start
+.\runner\setup-runner.ps1 -Name "myhost-quick" -Labels "lane-quick" -RunnerDir "C:\Users\<you>\Development\Syncyard\runners\quick" -RegistrationToken <token> -Start
 ```
 
-The full owner-session runbook — all four lanes, the watchdog install, and the per-lane identity proof — is [runner/SETUP.md](runner/SETUP.md).
+The full owner-session runbook — all four lanes, the tray supervisor install, and the per-lane identity proof — is [runner/SETUP.md](runner/SETUP.md).
+
+**Supervise the runners windowlessly** with the Syncyard Tray: download `SyncyardTray-Setup-0.1.0.exe` from [Releases](https://github.com/AXIOVEX/syncyard/releases), run it (per-user, no admin), and the runners start hidden under a tray icon that shows per-lane state and restarts a dead runner. Manual from-source installation is covered in [runner/SETUP.md](runner/SETUP.md) step 4.
 
 **2. Submit a job** through the gatekeeper from the operator machine:
 
@@ -116,8 +121,10 @@ The full standard is [docs/STANDARD.md](docs/STANDARD.md).
 
 ## Versioning
 
-Syncyard uses [Semantic Versioning](https://semver.org). Every change lands as a repository update with a version bump per semver and an entry in [CHANGELOG.md](CHANGELOG.md) (kept in [Keep a Changelog](https://keepachangelog.com) format). When behavior and the fleet disagree in the field, the fix lands here first, with a new revision — this repository is the canonical published source, and operator copies track its releases.
+Syncyard uses [Semantic Versioning](https://semver.org). Changes are recorded in [CHANGELOG.md](CHANGELOG.md) (kept in [Keep a Changelog](https://keepachangelog.com) format) under Unreleased; maintainers cut a release — and the version bump that goes with it — when a set of changes is complete and proven in daily use. When behavior and the fleet disagree in the field, the fix lands here first — this repository is the canonical published source, and operator copies track its releases.
 
 ## License
 
-Copyright © 2026 Axiovex Systems, LLC. All rights reserved. See [LICENSE](LICENSE).
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).
+
+Copyright © 2026 Axiovex Systems, LLC.

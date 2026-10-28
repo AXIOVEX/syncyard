@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Syncyard logo">
+  <title>Syncyard — lanes converging through one gate</title>
+  <rect x="16" y="16" width="480" height="480" rx="96" fill="#0E2A47"/>
+  <!-- entry lanes (off-white) -->
+  <g fill="none" stroke="#E8EEF4" stroke-width="26" stroke-linecap="round">
+    <path d="M84 168 H196"/>
+    <path d="M84 256 H196"/>
+    <path d="M84 344 H196"/>
+  </g>
+  <!-- job dots on the entry lanes (signal amber) -->
+  <g fill="#F5A524">
+    <circle cx="128" cy="168" r="17"/>
+    <circle cx="158" cy="256" r="17"/>
+    <circle cx="118" cy="344" r="17"/>
+  </g>
+  <!-- switch curves: three lanes converge to one (signal amber) -->
+  <g fill="none" stroke="#F5A524" stroke-width="26" stroke-linecap="round">
+    <path d="M196 168 C 292 168, 292 256, 372 256"/>
+    <path d="M196 256 H372"/>
+    <path d="M196 344 C 292 344, 292 256, 372 256"/>
+    <path d="M372 256 H436"/>
+  </g>
+</svg>
