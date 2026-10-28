@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""gk.py - Syncyard gatekeeper: the single dispatch/watch door for the
-AXIOVEX/syncyard self-hosted runner fleet.
+"""gk.py - Desktop Access gatekeeper: the single dispatch/watch door for the
+tbitcs/desktop-runner self-hosted runner fleet.
 
-Implements the Syncyard fleet standard (docs/STANDARD.md, Parts 2 and 4):
+Implements the fleet standard (github-polling-census-and-standard-2026-10-27,
+Parts 2 and 4):
   - one watcher (this tool, via a 5-minute cron sweep), batched reads
   - gh api rate_limit headroom check before any dispatch; hard stand-down
     below 1,000 core remaining, completion-critical only below 500
@@ -38,8 +39,9 @@ LOCK_DIR = os.path.join(BASE, ".sweep.lock")
 PAUSE_FILE = os.path.join(BASE, "PAUSED.json")
 STOP_FILE = os.path.join(BASE, "STOPPED.json")
 OUTBOX_CURSOR = os.path.join(BASE, "outbox-cursor.json")
+LANES_LIVE_FILE = os.path.join(BASE, "LANES_LIVE")
 
-REPO = "AXIOVEX/syncyard"
+REPO = "tbitcs/desktop-runner"
 PROJECT_REPO = "AXIOVEX/syncyard"   # canonical project repo (status --repo)
 HLOG = os.path.join(BASE, "gatekeeper.log")   # human-readable rotating log
 HLOG_MAX_BYTES = 1000000
@@ -387,10 +389,10 @@ def save_job(job):
         os.replace(tmp, job_path(job["id"]))
         return
     except PermissionError:
-        # Some hosts intermittently deny the native temp-file write path
-        # (EPERM) while plain shell writes still land. Fall back to a
-        # shell write (cat into a temp name, then mv) so sweeps keep
-        # persisting state during a restriction window.
+        # VM write restriction (see AGENTS.md desktop-relay failsafe note):
+        # native create/replace writes can be blocked with EPERM while shell
+        # writes still work. Fall back to writing through /bin/sh so sweeps
+        # keep persisting state during a restriction window.
         try:
             os.unlink(tmp)
         except OSError:
@@ -645,14 +647,17 @@ def dispatch_one(job, jobs):
     ledger("dispatching", job_id=job["id"], key=job["key"],
            workflow=job["workflow"], lane=job["lane"])
     before = now_iso()
+    lane_label = "lane-" + job["lane"]
     if job["workflow"] == "grab.yml":
         gh_args = ["workflow", "run", "grab.yml", "-R", REPO,
-                   "-f", "path=" + job["grab_path"]]
+                   "-f", "path=" + job["grab_path"],
+                   "-f", "lane=" + lane_label]
     else:
         with open(job["script_path"], "rb") as f:
             payload = base64.b64encode(f.read()).decode("ascii")
         gh_args = ["workflow", "run", job["workflow"], "-R", REPO,
-                   "-f", "cmd_b64=" + payload]
+                   "-f", "cmd_b64=" + payload,
+                   "-f", "lane=" + lane_label]
         if job.get("cwd"):
             gh_args += ["-f", "cwd=" + job["cwd"]]
     rc, out, err = run_cmd(["gh"] + gh_args, timeout=60)
@@ -718,11 +723,13 @@ def dispatch_pass(jobs, runs_by_id):
     waiting = sorted([j for j in jobs if j["state"] == "submitted"],
                      key=lambda j: j["created_at"])
     paused = (pause_state() is not None or stop_state() is not None)
+    lanes_live = os.path.isfile(LANES_LIVE_FILE)
     for job in waiting:
         maint = bool(job.get("maintenance"))
         if paused and not maint:
             continue  # paused: program work holds; maintenance flows
-        if active_count >= MAX_ACTIVE_DISPATCHED and not maint:
+        if not lanes_live and active_count >= MAX_ACTIVE_DISPATCHED \
+                and not maint:
             ledger("dispatch_deferred_cap", job_id=job["id"], key=job["key"],
                    active=active_count, cap=MAX_ACTIVE_DISPATCHED)
             continue
