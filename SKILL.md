@@ -167,7 +167,11 @@ The runners run under the **Syncyard Tray** supervisor
 - The tray is a per-user app with no window of its own. It starts at
   logon (HKCU Run key), shows per-lane state, starts every runner
   hidden, restarts a dead runner up to 3 times per hour and then
-  alerts OWNER NEEDED, and hides stray runner console windows.
+  alerts OWNER NEEDED, and hides stray runner console windows. Its
+  menu offers Start all and Stop all above the per-lane controls.
+  Its icon is the project mark (embedded in the program): clean
+  when every runner is up, amber slash when some are down, red
+  slash when none are up or one has faulted.
 - Runners stay in the owner's interactive session on purpose: jobs
   need his WSL distro, GPU, audio, and bench devices, which a Windows
   service in session 0 cannot reliably reach. Do not register the
