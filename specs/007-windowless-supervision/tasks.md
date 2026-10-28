@@ -16,3 +16,19 @@
       runner consoles, no lingering payload processes.
 - [ ] T006 — Lane identity jobs pass under tray supervision (spec 002
       T005), then the fleet resumes on lanes.
+- [x] T007 — Real Windows installer package for the tray: NSIS script
+      (`runner/tray/SyncyardTray.nsi`) producing
+      `SyncyardTray-Setup-0.1.0.exe` — per-user install, HKCU Run
+      autostart, Start Menu shortcut, registered uninstaller, silent
+      `/S` mode; published as a GitHub Release asset with a SHA-256.
+      README + SETUP.md carry the download route and the manual
+      from-source installation instructions.
+- [ ] T008 — Download-and-install test on the fleet desktop: fetch the
+      published package from the release URL, verify the hash, silent
+      install, verify files + Run key + uninstaller, tray alive and
+      supervising with no console windows.
+- [ ] T009 — macOS and Linux equivalents, built with GitHub CI
+      (owner order 2026-10-27): Linux as systemd units in a real
+      package, macOS as launchd agents + menu-bar supervisor in a
+      .pkg — only after T008 passes on Windows. Tracked in full
+      under spec 008.

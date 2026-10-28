@@ -77,6 +77,7 @@ namespace SyncyardTray
         private readonly System.Windows.Forms.Timer _timer;
         private readonly List<RunnerDef> _runners = new List<RunnerDef>();
         private readonly string _logPath;
+        private readonly Image _logoImage;
         private Icon _currentIcon;
         private int _tick;
 
@@ -88,6 +89,18 @@ namespace SyncyardTray
                 "SyncyardTray");
             Directory.CreateDirectory(baseDir);
             _logPath = Path.Combine(baseDir, "tray.log");
+
+            // The project mark sits next to the exe (the installer puts
+            // it there). The tray icon is the mark plus a small state
+            // badge; without the file it falls back to a plain dot.
+            try
+            {
+                string logoPath = Path.Combine(
+                    AppDomain.CurrentDomain.BaseDirectory, "logo.png");
+                if (File.Exists(logoPath))
+                    _logoImage = Image.FromFile(logoPath);
+            }
+            catch { _logoImage = null; }
 
             _runners.Add(new RunnerDef { Lane = "long",   Dir = @"C:\actions-runner-desktop" });
             _runners.Add(new RunnerDef { Lane = "quick",  Dir = @"C:\actions-runner-quick" });
@@ -343,14 +356,28 @@ namespace SyncyardTray
 
         private void SetIcon(Color color)
         {
-            var bmp = new Bitmap(16, 16);
+            var bmp = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(bmp))
             {
                 g.SmoothingMode =
                     System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.InterpolationMode =
+                    System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
                 g.Clear(Color.Transparent);
-                using (var b = new SolidBrush(color))
-                    g.FillEllipse(b, 1, 1, 14, 14);
+                if (_logoImage != null)
+                {
+                    g.DrawImage(_logoImage, 0, 0, 32, 32);
+                    // State badge: colored dot, white ring, lower right.
+                    using (var b = new SolidBrush(color))
+                        g.FillEllipse(b, 19, 19, 12, 12);
+                    using (var ring = new Pen(Color.White, 2))
+                        g.DrawEllipse(ring, 19, 19, 12, 12);
+                }
+                else
+                {
+                    using (var b = new SolidBrush(color))
+                        g.FillEllipse(b, 1, 1, 30, 30);
+                }
             }
             var old = _currentIcon;
             _currentIcon = Icon.FromHandle(bmp.GetHicon());

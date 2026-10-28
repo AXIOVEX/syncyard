@@ -8,7 +8,7 @@ profile. Runners run as **user-window processes** under the owner's
 account, never as a Windows service.
 
 You will: register four lane runners to this repository, install the
-runner watchdog, and prove each lane with an identity job. Budget about
+tray supervisor, and prove each lane with an identity job. Budget about
 half an hour of mostly waiting.
 
 ## Before you start
@@ -23,7 +23,7 @@ half an hour of mostly waiting.
   or been accounted for by their programs (see
   [docs/MIGRATION.md](../docs/MIGRATION.md), gate 5).
 - PowerShell 7 (`pwsh`) is installed — the dispatch workflows run their
-  steps under it. PowerShell 5.1 also works for the setup and watchdog
+  steps under it. PowerShell 5.1 also works for the setup scripts
   scripts (they are ASCII-only on purpose).
 
 ## Step 1 — Lay out the lanes
@@ -74,7 +74,7 @@ lane (substitute your token, names, and directories from step 1):
 Each run downloads the pinned runner package, registers the runner to
 this repository only, and opens its `run.cmd` in a user window. Leave
 the four windows open — closing one stops that lane's runner (the
-watchdog in step 4 restarts it within minutes, but an open window is
+tray supervisor from step 4 restarts it within seconds, but an open window is
 the expected resting state).
 
 Confirm all four show as **online** (one API call):
@@ -83,26 +83,42 @@ Confirm all four show as **online** (one API call):
 gh api repos/AXIOVEX/syncyard/actions/runners --jq '.runners[] | "\(.name) \(.status) labels=\([.labels[].name] | join(","))"'
 ```
 
-## Step 4 — Install the runner watchdog
+## Step 4 — Install the tray supervisor (spec 007)
 
-The watchdog checks every 5 minutes whether each runner's listener
-process is alive and restarts a dead one (cap: 3 restarts per runner
-per rolling hour; past the cap it logs OWNER NEEDED and stops
-restarting that runner).
+The runners run windowless under the **Syncyard Tray** supervisor: a
+per-user tray app that starts every runner hidden, shows per-lane
+state, restarts a dead runner (cap: 3 restarts per runner per rolling
+hour; past the cap it alerts OWNER NEEDED), and hides stray runner
+console windows. It replaces the older watchdog scheduled task — do
+not install that task.
 
-1. Copy `runner\runner-watchdog.ps1` to
-   `C:\actions-runner-watchdog\runner-watchdog.ps1` on the machine.
-2. Edit its `$RunnerDirs` config array to list **all four** lane
-   directories from step 1.
-3. Create the scheduled task (in the owner's session, PowerShell):
+**Installer package (recommended).** Download
+`SyncyardTray-Setup-0.1.0.exe` from the project's GitHub Releases and
+run it. It is a per-user install (no admin): files go to
+`%LOCALAPPDATA%\Programs\SyncyardTray`, autostart is registered in
+the HKCU Run key, a Start Menu shortcut is created, and an
+uninstaller is registered in Add/Remove Programs. Silent install:
+`SyncyardTray-Setup-0.1.0.exe /S`.
+
+**Manual install (from source).** Clone this repository, then in
+PowerShell:
 
 ```powershell
-schtasks /Create /TN "RunnerWatchdog" /SC MINUTE /MO 5 /RU <owner-user> /RL LIMITED /F /TR "powershell.exe -NoProfile -ExecutionPolicy Bypass -File C:\actions-runner-watchdog\runner-watchdog.ps1"
+.\runner\tray\install-tray.ps1
 ```
 
-4. Run it once by hand (`schtasks /Run /TN "RunnerWatchdog"`) and check
-   `C:\actions-runner-watchdog\status.json`: every runner should report
-   `listener_alive: true` and `last_action: "none (listener alive)"`.
+The script fetches the tray source and assets, compiles them with
+the csc.exe that ships with Windows (no SDK needed), installs under
+`%USERPROFILE%\Development\Syncyard\tray`, registers the same Run
+key, and launches the tray. Verify: the yard-mark icon appears in
+the tray (green badge when all lanes are up) and
+`%LOCALAPPDATA%\SyncyardTray\tray.log` shows each runner started
+hidden.
+
+**Uninstall.** Use Add/Remove Programs ("Syncyard Tray"), or run
+`%LOCALAPPDATA%\Programs\SyncyardTray\Uninstall.exe`. Uninstalling
+the tray never stops the runners themselves; stop a runner from the
+tray menu before uninstalling if you want it down.
 
 ## Step 5 — Prove each lane (identity jobs)
 
@@ -132,11 +148,11 @@ until it passes.
   download when the package is already extracted.
 - **A runner shows offline.** Check its window first — most "offline"
   runners are a closed window. Start it again with
-  `& "C:\actions-runner-<lane>\run.cmd"`, and confirm the watchdog's
+  `& "C:\actions-runner-<lane>\run.cmd"`, and confirm the tray's
   `status.json` sees the listener.
 - **Watchdog says OWNER NEEDED.** The restart cap tripped: the runner
-  is dying repeatedly, which is a real fault, not a watchdog fault.
-  Read `C:\actions-runner-watchdog\watchdog.log` and the runner's own
+  is dying repeatedly, which is a real fault, not a supervisor fault.
+  Read `%LOCALAPPDATA%\SyncyardTray\tray.log` and the runner's own
   `_diag` logs in its directory before restarting anything by hand.
 - **A dispatch queues forever on one lane.** Check the runner is
   online *and carries the exact lane label* — a label mismatch queues
