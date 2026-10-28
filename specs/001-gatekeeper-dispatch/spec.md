@@ -96,6 +96,19 @@ ones invisibly.
   (Owner decision 2026-10-27: push over SSE and over an MCP front
   door; MCP remains a possible later ergonomics addition, not the
   push mechanism.)
+- **FR-012 — Durable writes are WRITE-VERIFY-RETRY.** Every queue,
+  ledger, and control-file write (job records, ledger appends,
+  pause/stop records) MUST be written, read back, and verified
+  byte-for-byte (appends: by exact size growth), with bounded
+  retries and backoff; a write that cannot be verified fails loudly
+  and is never reported as done. A 0-byte or partial file is never
+  left standing as a successful record, the loader skips unreadable
+  records with a warning instead of crashing or trusting them, and
+  a submission reports queued only after the loader verifies the
+  exact record written. (Defect escalation 2026-10-27: the host
+  VM's intermittent write restriction both refuses writes in waves
+  and intermittently drops buffered writes silently, leaving
+  0-byte files; first documented 2026-10-20.)
 
 ## Claims discipline
 
