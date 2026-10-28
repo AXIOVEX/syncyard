@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Tray icon and menu (spec 007 FR-007/FR-008): the notification
+  icon is the official mark loaded from a copy embedded in the
+  program itself — clean when all runners are up, amber slash when
+  some are down, red slash when none are up or one has faulted. The
+  menu gains Start all and Stop all above the per-lane controls.
 - Runner directories move under the user profile
   (`%USERPROFILE%\Development\Syncyard\runners\<lane>`) — nothing
   Syncyard-owned sits in the drive root. Tray and watchdog defaults

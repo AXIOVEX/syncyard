@@ -45,6 +45,7 @@ if (-not (Test-Path $csc)) { throw "csc.exe not found - cannot compile." }
 Write-Host "Compiling with $csc"
 & $csc /nologo /target:winexe /out:$exe `
     /win32icon:(Join-Path $InstallDir "logo.ico") `
+    /resource:(Join-Path $InstallDir "logo.png"),SyncyardLogo.png `
     /reference:System.Windows.Forms.dll `
     /reference:System.Drawing.dll $src
 if ($LASTEXITCODE -ne 0) { throw "csc exited with code $LASTEXITCODE" }

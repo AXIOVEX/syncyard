@@ -10,9 +10,12 @@
 // for the owner), and hides any stray runner console window.
 //
 // Compile (no SDK install needed - csc ships with Windows):
-//   csc /target:winexe /out:SyncyardTray.exe
+//   csc /target:winexe /out:SyncyardTray.exe /win32icon:logo.ico
+//       /resource:logo.png,SyncyardLogo.png
 //       /reference:System.Windows.Forms.dll
 //       /reference:System.Drawing.dll SyncyardTray.cs
+// The mark is embedded as the SyncyardLogo.png resource so the tray
+// icon never depends on a file being in the right folder.
 //
 // C# 5 compatible on purpose (Framework 4.x csc).
 
@@ -90,17 +93,33 @@ namespace SyncyardTray
             Directory.CreateDirectory(baseDir);
             _logPath = Path.Combine(baseDir, "tray.log");
 
-            // The project mark sits next to the exe (the installer puts
-            // it there). The tray icon is the mark plus a small state
-            // badge; without the file it falls back to a plain dot.
+            // The project mark is embedded in this program as the
+            // SyncyardLogo.png resource (spec 007 FR-007); a logo.png
+            // next to the exe is only a fallback. The tray icon IS
+            // the mark, with a slash overlay when runners are down.
             try
             {
-                string logoPath = Path.Combine(
-                    AppDomain.CurrentDomain.BaseDirectory, "logo.png");
-                if (File.Exists(logoPath))
-                    _logoImage = Image.FromFile(logoPath);
+                var asm = System.Reflection.Assembly
+                    .GetExecutingAssembly();
+                using (var stream = asm.GetManifestResourceStream(
+                    "SyncyardLogo.png"))
+                {
+                    if (stream != null)
+                        _logoImage = new Bitmap(Image.FromStream(stream));
+                }
             }
             catch { _logoImage = null; }
+            if (_logoImage == null)
+            {
+                try
+                {
+                    string logoPath = Path.Combine(
+                        AppDomain.CurrentDomain.BaseDirectory, "logo.png");
+                    if (File.Exists(logoPath))
+                        _logoImage = Image.FromFile(logoPath);
+                }
+                catch { _logoImage = null; }
+            }
 
             _runners.Add(new RunnerDef { Lane = "long",   Dir = @"C:\Users\trist\Development\Syncyard\runners\long" });
             _runners.Add(new RunnerDef { Lane = "quick",  Dir = @"C:\Users\trist\Development\Syncyard\runners\quick" });
@@ -248,6 +267,32 @@ namespace SyncyardTray
             r.Running = false;
         }
 
+        private void StartAll()
+        {
+            foreach (var r in _runners)
+            {
+                r.Faulted = false;
+                r.RestartTimes.Clear();
+            }
+            RefreshStates();
+            StartMissing();
+            RefreshStates();
+            RebuildMenu();
+        }
+
+        private void StopAll()
+        {
+            var ok = MessageBox.Show(
+                "Stop ALL runners? Any jobs running on them will be killed.",
+                "Syncyard Tray", MessageBoxButtons.OKCancel,
+                MessageBoxIcon.Warning);
+            if (ok != DialogResult.OK) return;
+            foreach (var r in _runners)
+                if (r.Running) StopRunner(r);
+            RefreshStates();
+            RebuildMenu();
+        }
+
         // --- stray console hiding ----------------------------------------
 
         private void SetStrayConsoles(int cmd)
@@ -286,6 +331,17 @@ namespace SyncyardTray
         {
             var menu = new ContextMenuStrip();
             int running = 0;
+            foreach (var r in _runners) if (r.Running) running++;
+            var startAll = new ToolStripMenuItem("Start all runners");
+            startAll.Enabled = running < _runners.Count;
+            startAll.Click += delegate { StartAll(); };
+            menu.Items.Add(startAll);
+            var stopAll = new ToolStripMenuItem("Stop all runners");
+            stopAll.Enabled = running > 0;
+            stopAll.Click += delegate { StopAll(); };
+            menu.Items.Add(stopAll);
+            menu.Items.Add(new ToolStripSeparator());
+            running = 0;
             foreach (var r in _runners)
             {
                 if (r.Running) running++;
@@ -346,15 +402,20 @@ namespace SyncyardTray
             menu.Items.Add(exit);
             _icon.ContextMenuStrip = menu;
 
-            Color c = AnyFaulted() ? Color.Red
-                    : running == _runners.Count ? Color.Green
-                    : Color.Goldenrod;
-            SetIcon(c);
+            int iconState = AnyFaulted() || running == 0 ? 2
+                          : running == _runners.Count ? 0 : 1;
+            SetIcon(iconState);
             _icon.Text = "Syncyard: " + running + "/" + _runners.Count +
                          " runners up";
         }
 
-        private void SetIcon(Color color)
+        // Icon states (FR-007): 0 = all runners up, clean mark;
+        // 1 = some down, amber slash; 2 = none up or faulted, red
+        // slash. The slash is drawn with a white halo so it reads on
+        // light and dark taskbars. The dot exists only if the mark
+        // itself failed to load, which the embedded resource makes a
+        // should-never-happen path.
+        private void SetIcon(int state)
         {
             var bmp = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(bmp))
@@ -367,15 +428,23 @@ namespace SyncyardTray
                 if (_logoImage != null)
                 {
                     g.DrawImage(_logoImage, 0, 0, 32, 32);
-                    // State badge: colored dot, white ring, lower right.
-                    using (var b = new SolidBrush(color))
-                        g.FillEllipse(b, 19, 19, 12, 12);
-                    using (var ring = new Pen(Color.White, 2))
-                        g.DrawEllipse(ring, 19, 19, 12, 12);
+                    if (state > 0)
+                    {
+                        Color slash = state == 2
+                            ? Color.FromArgb(225, 45, 45)
+                            : Color.FromArgb(235, 165, 25);
+                        using (var halo = new Pen(Color.White, 9))
+                            g.DrawLine(halo, 6, 26, 26, 6);
+                        using (var pen = new Pen(slash, 5))
+                            g.DrawLine(pen, 6, 26, 26, 6);
+                    }
                 }
                 else
                 {
-                    using (var b = new SolidBrush(color))
+                    Color dot = state == 2 ? Color.Red
+                              : state == 1 ? Color.Goldenrod
+                              : Color.Green;
+                    using (var b = new SolidBrush(dot))
                         g.FillEllipse(b, 1, 1, 30, 30);
                 }
             }
