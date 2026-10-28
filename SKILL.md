@@ -16,6 +16,16 @@ through the gatekeeper.
 Repository: `AXIOVEX/syncyard`. The live gatekeeper copy runs on the
 operator's control machine and tracks this repository's releases.
 
+## Keeping this skill current (standing rule)
+
+**This file is updated in the same change as any change to behavior,
+commands, lanes, workflows, or operations.** A change that leaves
+this skill stale is incomplete. The project is governed by spec-kit
++ AEE: a constitution (`.specify/memory/constitution.md`) and
+numbered specs under `specs/`, each requirement a claim with
+evidence and a falsification test. Changes cite the spec they
+implement; behavior with no spec gets a spec in the same change.
+
 ## Commands
 
 ```bash
@@ -39,8 +49,40 @@ $GK submit --program <your-program> --workflow grab.yml \
 $GK adopt --run-id <id> --program <your-program> --workflow <wf> \
     --lane <lane> --key <unique-key>
 
-# The board: every tracked job, its state, flags, and verdict markers
+# The board: every tracked job, its state, flags, and verdict markers,
+# plus queued/running counts and an ISSUES section (see below)
 $GK status
+
+# The board + project-repo health: latest CI, open Dependabot alerts
+# and PRs (three API calls; the default status above is local-only)
+$GK status --repo
+
+# Hold ALL program dispatch (the watch pass keeps running, so verdicts
+# and watermarks stay current; jobs already dispatched are untouched —
+# the gatekeeper never cancels). Operator maintenance jobs submitted
+# with --maintenance still dispatch during a pause.
+$GK pause --reason "WSL cleanup + compact"
+$GK resume
+
+# The hard halt: sweeps no-op entirely (no budget spent, no watch)
+# until started again. Start clears both a stop and a pause.
+$GK stop --reason "fleet maintenance"
+$GK start
+
+# Housekeeping: remove terminal (completed/cancelled) job records.
+# Dry-run unless --yes; job records carry the harvested evidence, so
+# purge with an age filter. --ledger also archives the ledger.
+$GK purge --older-than-days 7
+$GK purge --older-than-days 7 --yes
+
+# Push notifications: add --notify-chat <chat-id> to any submit or
+# adopt and the coordinator is told when the run starts (with its
+# expected length), completes (with the marker verdict), or
+# escalates — programs register once and never poll. The outbox
+# lists the pushes owed, grouped by chat; --ack advances past them
+# once they have been delivered.
+$GK outbox
+$GK outbox --ack
 ```
 
 - Every job carries a **unique `--key`**. Submitting a key that is already
@@ -52,6 +94,53 @@ $GK status
 - `gk cancel <id-or-key>` is local bookkeeping for jobs that were never
   dispatched. It never cancels a GitHub run. There is no command in this
   system that cancels a running job on a timer — see escalation below.
+- The status board's **ISSUES** section is the operator's problem
+  list: watermark breaches and escalations, log harvests that failed
+  or are still pending, a dispatch stuck needing a human, and
+  completions with no marker verdict. Read it before concluding the
+  fleet is healthy.
+- **Logging is two-layered**: `ledger.jsonl` (append-only JSON, one
+- Every gatekeeper state write is write-verify-retry (spec 001
+  FR-012): verified on read-back or it fails loudly; never trust
+  an unverified write, and never treat a 0-byte state file as real. A failed update leaves the last valid
+  record standing; only true husks are removed.
+  record per event — the machine record) and `gatekeeper.log` (one
+  human-readable line per sweep, rotating at 1 MB). At completion the
+  sweep harvests a run's log once; if the CLI read fails it falls
+  back to the REST logs archive and records which source supplied
+  the log.
+- A **daily health check** reviews the board, the ledger's errors,
+  CI on main, and Dependabot. Green Dependabot patch/minor bumps of
+  GitHub Actions are merged by the check; major bumps are reported
+  to the operator, never merged.
+- **Pause** (`gk pause` / `gk resume`) holds dispatch of program
+  jobs while the operator works on the machines themselves. Status
+  shows the pause banner with its reason; sweeps print PAUSED.
+  Maintenance submissions (`submit --maintenance`) bypass the pause,
+  the active cap, and lane serialization — never the duplicate
+  check. Use maintenance only for operator work on the fleet itself
+  (cleanup, repair, inventory), never for program jobs.
+- **Stop and start** (`gk stop` / `gk start`) are the hard lifecycle
+  controls: while stopped, a sweep returns immediately — no API
+  budget spent, no watch pass, no dispatch — and status shows the
+  STOPPED banner. `start` clears both a stop and a pause. Neither
+  state ever touches jobs already dispatched.
+- **Purge** (`gk purge`) removes terminal (completed/cancelled) job
+  records — dry-run unless `--yes` is passed. `--older-than-days N`
+  restricts it to records created more than N days ago;
+  `--ledger` also archives `ledger.jsonl` and starts a fresh one.
+  Records hold harvested markers and log tails, so age-filtered
+  purges are the norm.
+- **Push notifications** (`--notify-chat` on submit/adopt;
+  `gk outbox`) replace polling: a registered job produces a push
+  when its run starts (with the job's expected length), completes
+  (conclusion plus verdict highlights from the harvested markers),
+  or escalates at a W2 watermark. The sweep's outbox prints the
+  pushes owed, grouped by chat, from the append-only ledger —
+  history from before the mechanism existed is never replayed —
+  and the cursor advances (`outbox --ack`) only after the
+  coordinator has delivered them into the named chats. Pushes ride
+  the existing sweep cadence; there is no server to run.
 
 ## Lane routing
 
@@ -73,6 +162,36 @@ Every dispatch declares a lane. **No lane declared = not dispatched.**
   not take a lane; the status checks *about* them are `quick` jobs.
 - Jobs expected to exceed 60 minutes are announced to the coordination
   point before dispatch, with their expected duration.
+
+## Windowless supervision (spec 007)
+
+The runners run under the **Syncyard Tray** supervisor
+(`runner/tray/`), never as hand-started console windows:
+
+- The tray is a per-user app with no window of its own. It starts at
+  logon (HKCU Run key), shows per-lane state, starts every runner
+  hidden, restarts a dead runner up to 3 times per hour and then
+  alerts OWNER NEEDED, and hides stray runner console windows. Its
+  menu offers Start all and Stop all above the per-lane controls.
+  Its icon is the project mark (embedded in the program): clean
+  when every runner is up, amber slash when some are down,
+  grayscale with a red slash when none are up or one has faulted.
+- Runners stay in the owner's interactive session on purpose: jobs
+  need his WSL distro, GPU, audio, and bench devices, which a Windows
+  service in session 0 cannot reliably reach. Do not register the
+  runners as services.
+- Runner directories live under the owner's profile at
+  `%USERPROFILE%\Development\Syncyard\runners\<lane>` — never in
+  the drive root. The tray's runner table points there; if the
+  directories move, update the tray and reinstall it.
+- Install or reinstall with `runner/tray/install-tray.ps1` in an
+  owner session (compiles with the in-box csc; no SDK needed). The
+  tray supervisor replaces the `runner-watchdog.ps1` scheduled task —
+  do not install that task while the tray is active.
+- A job script that starts a program starts it hidden or headless
+  and cleans it up when the job ends; a visible window or a lingering
+  process after a job is a defect in that script.
+- Long-lived agents on Linux or WSL targets run as systemd units.
 
 ## Marker verdicts
 
