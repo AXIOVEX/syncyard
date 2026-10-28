@@ -38,3 +38,8 @@
       the tray + watchdog defaults point there, the docs show the
       layout, and the installer package is rebuilt and re-tested
       against the new locations.
+- [ ] T011 — Icon states (FR-007): mark embedded as a program
+      resource; clean / amber-slash / red-slash rendering; rebuilt,
+      swapped onto the desktop, owner eyeballs the three states.
+- [ ] T012 — Bulk controls (FR-008): Start all / Stop all menu
+      items with one confirmation for Stop all.

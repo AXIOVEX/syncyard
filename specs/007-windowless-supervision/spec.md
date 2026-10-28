@@ -70,3 +70,16 @@ supervisor is.
   runner console windows and no lingering payload processes.
 - Each lane passes its spec-002 identity job under tray supervision
   before real dispatch resumes.
+- **FR-007 — The tray icon IS the project mark, and it shows
+  connection at a glance (owner order 2026-10-27).** The
+  notification-area icon is the official Syncyard mark, loaded from
+  a copy embedded in the program itself (a mark file next to the
+  program is only a fallback), in three states: all runners up =
+  the clean mark; some runners down = the mark with an amber slash;
+  no runners up, or a runner faulted = the mark with a red slash.
+  A plain colored dot is never the shipped icon.
+- **FR-008 — Bulk controls in the tray menu (owner order
+  2026-10-27).** The tray menu offers Start all and Stop all above
+  the per-lane controls: Start all starts every stopped runner and
+  clears any faulted state; Stop all asks once for confirmation,
+  then stops every running runner.
