@@ -159,6 +159,28 @@ Every dispatch declares a lane. **No lane declared = not dispatched.**
 - Jobs expected to exceed 60 minutes are announced to the coordination
   point before dispatch, with their expected duration.
 
+## Windowless supervision (spec 007)
+
+The runners run under the **Syncyard Tray** supervisor
+(`runner/tray/`), never as hand-started console windows:
+
+- The tray is a per-user app with no window of its own. It starts at
+  logon (HKCU Run key), shows per-lane state, starts every runner
+  hidden, restarts a dead runner up to 3 times per hour and then
+  alerts OWNER NEEDED, and hides stray runner console windows.
+- Runners stay in the owner's interactive session on purpose: jobs
+  need his WSL distro, GPU, audio, and bench devices, which a Windows
+  service in session 0 cannot reliably reach. Do not register the
+  runners as services.
+- Install or reinstall with `runner/tray/install-tray.ps1` in an
+  owner session (compiles with the in-box csc; no SDK needed). The
+  tray supervisor replaces the `runner-watchdog.ps1` scheduled task —
+  do not install that task while the tray is active.
+- A job script that starts a program starts it hidden or headless
+  and cleans it up when the job ends; a visible window or a lingering
+  process after a job is a defect in that script.
+- Long-lived agents on Linux or WSL targets run as systemd units.
+
 ## Marker verdicts
 
 **A job's verdict comes from the marker lines it prints in its own log —

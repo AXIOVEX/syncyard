@@ -94,8 +94,8 @@ if ($Start) {
     # child processes. A scheduled-task watchdog (runner-watchdog.ps1)
     # keeps the listener alive afterwards; see SETUP.md.
     $runCmd = Join-Path $RunnerDir "run.cmd"
-    Start-Process -FilePath $runCmd -WorkingDirectory $RunnerDir
-    Write-Host "Started run.cmd in a user window. Keep the window open; close it to stop the runner."
+    Start-Process -FilePath $runCmd -WorkingDirectory $RunnerDir -WindowStyle Hidden
+    Write-Host "Started run.cmd hidden (no console window). Stop it via Task Manager (Runner.Listener) or the watchdog's OWNER NEEDED path."
 } else {
     Write-Host "Not started. Start it later with:  & `"$RunnerDir\run.cmd`""
 }

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Spec 007 — windowless runner supervision: the Syncyard Tray app
+  (`runner/tray/SyncyardTray.cs` + `install-tray.ps1`) supervises the
+  runners from the owner's tray — hidden starts, per-lane state,
+  capped restarts with an OWNER NEEDED alert, stray-console hiding,
+  logon autostart. `setup-runner.ps1` now starts runners hidden too,
+  and the tray subsumes the planned watchdog scheduled task.
 - Gatekeeper push notifications: jobs register a chat with
   `--notify-chat` (on submit or adopt) and receive started (with
   expected length), completed (marker verdict), and W2-escalation
