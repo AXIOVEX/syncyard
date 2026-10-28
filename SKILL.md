@@ -103,7 +103,13 @@ $GK outbox --ack
 - Every gatekeeper state write is write-verify-retry (spec 001
   FR-012): verified on read-back or it fails loudly; never trust
   an unverified write, and never treat a 0-byte state file as real. A failed update leaves the last valid
-  record standing; only true husks are removed.
+  record standing; only true husks are removed. Record updates are
+  atomic swaps (FR-013): a record's file is only ever replaced by
+  renaming a fully verified temp file over it — the final path is
+  never opened for writing, so a failed save cannot destroy the
+  standing record; inside a sweep, a failed per-record save is
+  ledgered (`save_failed`) and the pass continues, and a job whose
+  pre-dispatch save failed is skipped, never dispatched unrecorded.
   record per event — the machine record) and `gatekeeper.log` (one
   human-readable line per sweep, rotating at 1 MB). At completion the
   sweep harvests a run's log once; if the CLI read fails it falls

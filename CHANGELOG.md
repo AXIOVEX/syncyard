@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Fixed
+- Gatekeeper record updates are atomic swaps (spec 001 FR-013):
+  a job record's file is only ever replaced by renaming a fully
+  verified temp file over it — the record path is never opened
+  for writing. The pre-FR-013 direct-write fallback truncated
+  the standing record before verification could fail, which is
+  how records were lost in the 2026-10-28 write waves despite
+  verified-retry. A failed save now leaves the prior record
+  standing untouched (or nothing, for a new record — no husk
+  can exist), sweep-internal saves go through a safe wrapper
+  that ledgers `save_failed` and continues the pass, and a job
+  whose pre-dispatch save fails is skipped rather than
+  dispatched unrecorded. Proven by the fault-injection battery
+  in gatekeeper/test_fr013.py.
 - Gatekeeper FR-012 refinement (same night): the failed-write
   cleanup removes only content that is not a valid record (0-byte
   or partial husks); a failed UPDATE leaves the last valid record

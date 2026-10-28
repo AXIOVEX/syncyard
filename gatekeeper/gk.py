@@ -202,11 +202,33 @@ def pause_state():
 
 def _write_text_file(path, text):
     """Write a small text file through the write-verify-retry path
-    (spec 001 FR-012). Raises IOError when the write cannot be
-    verified - a pause/stop record that silently did not land is a
-    safety failure, not a soft one."""
-    if not _write_verified_bytes(path, text.encode("utf-8")):
+    (spec 001 FR-012), landed by atomic swap (FR-013): the payload
+    is verified in a temp file in the same directory and renamed
+    over the target, so the target is never opened for writing and
+    a failed write leaves the prior content standing. Raises
+    IOError when the write cannot be verified - a pause/stop record
+    that silently did not land is a safety failure, not a soft
+    one."""
+    data = text.encode("utf-8")
+    directory = os.path.dirname(path) or "."
+    tmp = os.path.join(directory, ".%s.%d.tmp"
+                       % (os.path.basename(path), os.getpid()))
+    try:
+        if _write_verified_bytes(tmp, data):
+            try:
+                os.replace(tmp, path)
+                with open(path, "rb") as f:
+                    if f.read() == data:
+                        _fsync_dir(directory)
+                        return
+            except OSError:
+                pass
         raise IOError("could not write verified file: %s" % path)
+    finally:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
 
 
 def cmd_pause(args):
@@ -452,59 +474,91 @@ def _record_bytes_valid(data):
 
 
 def save_job(job):
-    """Persist a job record under WRITE-VERIFY-RETRY (spec 001
-    FR-012): the payload is written to a unique temp file and read
-    back byte-for-byte before it is moved into place; if the move
-    itself is refused, the payload is written directly to the final
-    path and verified there. Raises IOError when no verified write
-    lands - callers must never treat an unverified save as done, and
-    a 0-byte or partial file is never left standing as the record."""
+    """Persist a job record under WRITE-VERIFY-RETRY + ATOMIC SWAP
+    (spec 001 FR-012 + FR-013): the payload is written to a unique
+    temp file and read back byte-for-byte; ONLY an atomic rename
+    (os.replace) ever changes the record at its final path, and the
+    renamed content is verified there. The final path is NEVER opened
+    for writing: the pre-FR-013 fallback wrote it directly with
+    O_TRUNC, so a wave-killed direct write destroyed the standing
+    valid record before verification could fail (the losses of
+    2026-10-28 01:53-02:23Z and 12:08Z). If no attempt lands, raise
+    IOError with the prior record (if any) standing untouched - for
+    an update, the old state remains the truth on disk and the next
+    pass retries; for a new record, nothing stands at the final path
+    at all, so no husk can exist."""
     payload = json.dumps(job, indent=2, sort_keys=True).encode("utf-8")
     final = job_path(job["id"])
-    tmp = os.path.join(QUEUE_DIR, ".%s.%d.tmp"
-                       % (job["id"], os.getpid()))
+    tmps = []
     try:
-        if _write_verified_bytes(tmp, payload):
-            for i in range(8):
+        for i in range(8):
+            tmp = os.path.join(
+                QUEUE_DIR, ".%s.%d.%d.%s.tmp"
+                % (job["id"], os.getpid(), i, uuid.uuid4().hex[:6]))
+            tmps.append(tmp)
+            if _write_verified_bytes(tmp, payload):
                 try:
                     os.replace(tmp, final)
-                    with open(final, "rb") as f:
-                        if f.read() == payload:
-                            return
                 except OSError:
                     pass
-                if i + 1 < 8:
-                    time.sleep(min(0.25 * (2 ** i), 8.0))
-        # The move would not land (or the temp write never verified):
-        # write the final path directly and verify it there.
-        if _write_verified_bytes(final, payload):
-            return
-        # Nothing verified. Remove the file ONLY when what stands
-        # there is not a valid record at all (a 0-byte or partial
-        # husk from a first write). When it holds a valid OLDER
-        # record - the normal case for a state update - leave it
-        # standing: the update failed loudly, the old state is the
-        # truth on disk, and the next pass retries the update.
-        # (First version of this cleanup deleted a live record on a
-        # failed dispatch update, 2026-10-27 23:53 ET - the check
-        # compared bytes instead of validity.)
-        try:
-            with open(final, "rb") as f:
-                current = f.read()
-            if not _record_bytes_valid(current):
-                os.unlink(final)
-                print("ERROR: removed unverifiable husk for job "
-                      "%s; the record must be resubmitted"
-                      % job["id"], file=sys.stderr)
-        except OSError:
-            pass
+                else:
+                    try:
+                        with open(final, "rb") as f:
+                            landed = f.read()
+                    except OSError:
+                        landed = None
+                    if landed == payload:
+                        _fsync_dir(QUEUE_DIR)
+                        return
+            if i + 1 < 8:
+                time.sleep(min(0.25 * (2 ** i), 8.0))
         raise IOError("save_job could not verify a write for job %s"
                       % job["id"])
     finally:
+        for t in tmps:
+            try:
+                os.unlink(t)
+            except OSError:
+                pass
+
+
+def _fsync_dir(path):
+    """Best-effort fsync of a directory so a rename inside it is
+    durable. Never raises."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
         try:
-            os.unlink(tmp)
-        except OSError:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
+def save_job_safe(job, context):
+    """save_job for sweep-internal state updates (spec 001 FR-013):
+    a single record's failed save must not kill the whole pass. On
+    failure the event is ledgered and logged loudly and False is
+    returned; the state on disk remains the older truth and the next
+    sweep re-derives GitHub-side state and retries the update. The
+    caller decides what a False means for its own step (the dispatch
+    path treats a failed pre-dispatch save as skip-this-job: never
+    dispatch what could not be recorded first)."""
+    try:
+        save_job(job)
+        return True
+    except (IOError, OSError) as exc:
+        try:
+            ledger("save_failed", job_id=job["id"], key=job.get("key"),
+                   context=context, error=str(exc)[:200])
+        except Exception:
             pass
+        hlog("SAVE_FAILED job=%s context=%s error=%s"
+             % (job["id"], context, exc))
+        print("ERROR: save failed for job %s (%s); the sweep "
+              "continues and the update retries next pass"
+              % (job["id"], context), file=sys.stderr)
+        return False
 
 
 def load_jobs():
@@ -749,7 +803,13 @@ def dispatch_one(job, jobs):
     killed sweep cannot double-dispatch."""
     job["state"] = "dispatching"
     job["dispatching_at"] = now_iso()
-    save_job(job)
+    if not save_job_safe(job, "pre_dispatch"):
+        # Never dispatch what could not be recorded first (FR-013):
+        # the record on disk still reads submitted, so the job is
+        # simply skipped this pass and retried by the next sweep.
+        job["state"] = "submitted"
+        job.pop("dispatching_at", None)
+        return False
     ledger("dispatching", job_id=job["id"], key=job["key"],
            workflow=job["workflow"], lane=job["lane"])
     before = now_iso()
@@ -782,7 +842,7 @@ def dispatch_one(job, jobs):
         job["run_id"] = run_id
         job["dispatched_at"] = now_iso()
         job.pop("dispatching_at", None)
-        save_job(job)
+        save_job_safe(job, "dispatched")
         ledger("dispatched", job_id=job["id"], key=job["key"],
                run_id=run_id, gh_rc=rc)
         return True
@@ -791,7 +851,7 @@ def dispatch_one(job, jobs):
         job["state"] = "submitted"
         job["last_dispatch_error"] = (err or "").strip()[:300]
         job.pop("dispatching_at", None)
-        save_job(job)
+        save_job_safe(job, "dispatch_failed_retryable")
         ledger("dispatch_failed_retryable", job_id=job["id"],
                key=job["key"], gh_rc=rc,
                error=job["last_dispatch_error"])
@@ -801,7 +861,7 @@ def dispatch_one(job, jobs):
         job["state"] = "dispatching"
         if "dispatch_unconfirmed" not in job["flags"]:
             job["flags"].append("dispatch_unconfirmed")
-        save_job(job)
+        save_job_safe(job, "dispatch_unconfirmed")
         ledger("dispatch_unconfirmed", job_id=job["id"], key=job["key"])
     return False
 
@@ -816,7 +876,7 @@ def dispatch_pass(jobs, runs_by_id):
             if age is not None and age > STALE_DISPATCHING_MIN:
                 if "stale_dispatching" not in j["flags"]:
                     j["flags"].append("stale_dispatching")
-                    save_job(j)
+                    save_job_safe(j, "stale_dispatching")
                     ledger("stale_dispatching", job_id=j["id"], key=j["key"],
                            age_min=round(age, 1))
     holding = [j for j in jobs
@@ -1019,7 +1079,7 @@ def watch_pass(jobs, runs_by_id):
         if run is None:
             if not job.get("not_in_list_noted"):
                 job["not_in_list_noted"] = True
-                save_job(job)
+                save_job_safe(job, "run_not_in_list")
                 ledger("run_not_in_list", job_id=job["id"], key=job["key"],
                        run_id=job["run_id"])
             continue
@@ -1045,10 +1105,10 @@ def watch_pass(jobs, runs_by_id):
                 fetch_log_once(job)
             job["state"] = "completed"
             job["completed_at"] = job.get("completed_at") or now_iso()
-            save_job(job)
+            save_job_safe(job, "completed")
         else:
             breaches += eval_watermarks(job, run)
-            save_job(job)
+            save_job_safe(job, "watch_update")
     return changes, breaches
 
 

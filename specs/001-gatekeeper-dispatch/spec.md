@@ -109,6 +109,25 @@ ones invisibly.
   VM's intermittent write restriction both refuses writes in waves
   and intermittently drops buffered writes silently, leaving
   0-byte files; first documented 2026-10-20.)
+- **FR-013 — Record updates are ATOMIC SWAPS; a failed save never
+  destroys the standing record, and never kills the sweep.** A job
+  record at its final path MUST be changed only by atomically
+  renaming a fully verified temp file over it; the record's final
+  path is never opened for writing (the pre-FR-013 direct-write
+  fallback truncated the standing record before verification could
+  fail, which is how verified-retry lost records on 2026-10-28 —
+  four in the 01:53–02:23Z wave and one at 12:08Z). When no swap
+  lands, the save raises with the prior record standing untouched:
+  an update retries next pass from the older truth, and a new
+  record leaves nothing at the final path (no husk can exist).
+  Inside a sweep, per-record saves go through a safe wrapper: a
+  failure is ledgered (event `save_failed`) and the pass CONTINUES;
+  the dispatch step treats a failed pre-dispatch save as
+  skip-this-job — never dispatch what could not be recorded first.
+  (Defect fix 2026-10-28, executed under the fleet pause; verified
+  by the FR-013 fault-injection battery in gatekeeper/test_fr013.py:
+  with every rename refused, the standing record survives
+  byte-for-byte and dispatch is never attempted.)
 
 ## Claims discipline
 
