@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Spec 009 — failsafe backchannel (owner override order,
+  2026-10-29: Syncyard must have a failsafe backchannel for when
+  Syncyard itself is down or blocked, with a dedicated channel
+  just for Syncyard development in the Desktop Access chat).
+  A dedicated channel `syncyard-dev` in the private repo
+  `tbitcs/syncyard-backchannel` (`channels/syncyard-dev/cmd.json`,
+  `out.json`, `heartbeat.json`), reserved exclusively for
+  Syncyard development/recovery by the Desktop Access chat — no
+  program job traffic, ever, and no other chat may post to it.
+  The desktop agent (`backchannel/agent.sh`) runs as a WSL
+  systemd user service independent of the runners, the tray, and
+  the gatekeeper, syncs over git (no REST quota), executes only
+  new, hash-verified command ids, honours a STOP kill switch,
+  and never writes gatekeeper queue records. The VM-side client
+  (`backchannel/bc.py`, stdlib only) sends through the GitHub
+  contents API (works during VM write waves), refuses to
+  overwrite an unacknowledged pending command unless `--force`,
+  and verifies every send by read-back; offline tests live in
+  `backchannel/test_bc.py`. Named recovery use cases: restart
+  the packaged tray in the owner's session, read `tray.log`,
+  restart a runner lane, read-only network diagnostics.
+- Periodic Syncyard status-check duty, fleet-wide (spec 009
+  FR-005): every agent that uses Syncyard checks status before
+  submitting desktop work and at least once per hour during an
+  active desktop campaign (`gk status`, otherwise the
+  backchannel heartbeat/status); a stale heartbeat (>5 min) or a
+  down tray/runner is reported to the Desktop Access chat, never
+  worked around. SKILL.md carries the duty and a Failsafe
+  Backchannel section.
+- Job protection on any Syncyard change (spec 009 FR-006):
+  begin with a queue snapshot (record count, aggregate sha256
+  of queue files, open-job list) and end with reconciliation —
+  the open-job set after must equal the set before, or every
+  difference is named and explained. No job may be lost
+  silently.
+
 ### Fixed
 - Gatekeeper record updates are atomic swaps (spec 001 FR-013):
   a job record's file is only ever replaced by renaming a fully
@@ -141,6 +178,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The version stays at 0.1.1 for now, by owner decision: no version
   bump until the project is fully landed, passes full CI, and has
   served as the fleet's daily driver for a few days.
+
+## [0.2.0] - 2026-10-29
+
+### Added
+
+- Spec 009 — failsafe backchannel (see the `[Unreleased]` entry
+  above for the full description): the dedicated `syncyard-dev`
+  channel in the private `tbitcs/syncyard-backchannel` repo, the
+  WSL systemd agent and its installer, the `bc.py` contents-API
+  client with offline tests, the fleet-wide periodic
+  status-check duty (FR-005), and queue snapshot/reconciliation
+  job protection on any Syncyard change (FR-006). Released by
+  the owner's explicit "deploy new version" order of 2026-10-29,
+  which overrides the earlier version hold.
 
 ## [0.1.1] - 2026-10-27
 
