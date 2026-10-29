@@ -148,6 +148,20 @@ $GK outbox --ack
   coordinator has delivered them into the named chats. Pushes ride
   the existing sweep cadence; there is no server to run.
 
+## Periodic status-check duty (spec 009 FR-005)
+
+**Every agent that uses Syncyard checks Syncyard status before
+submitting desktop work, and at least once per hour during an
+active desktop campaign.** Use `gk status` when the gatekeeper is
+reachable; otherwise use the failsafe backchannel's read-only
+status (`backchannel/bc.py heartbeat` / `bc.py status` — see the
+Failsafe Backchannel section below). A stale backchannel
+heartbeat (older than 5 minutes), a down tray, or a down runner
+is **reported to the Desktop Access chat**
+(`01e9a059-0626-4470-b012-2784f420fe5a`) — never worked around,
+never routed around silently, and never a reason to improvise an
+alternate route to the machines.
+
 ## Lane routing
 
 Every dispatch declares a lane. **No lane declared = not dispatched.**
@@ -297,6 +311,45 @@ not because the queue is long. If you believe the emergency path is
 genuinely needed (the gatekeeper cannot dispatch and the runners cannot
 be reached), stop, say exactly that, and let the owner decide. Do not
 improvise alternate routes to the machines.
+
+## Failsafe Backchannel (spec 009)
+
+Syncyard has a failsafe backchannel for the case where Syncyard
+itself — the runners, the tray, or gatekeeper dispatch — is down
+or blocked. It is deliberately narrow:
+
+- **Channel**: `syncyard-dev` in the **private** repository
+  `tbitcs/syncyard-backchannel` —
+  `channels/syncyard-dev/cmd.json`, `out.json`, and
+  `heartbeat.json`.
+- **Owner**: the **Desktop Access chat only**
+  (`01e9a059-0626-4470-b012-2784f420fe5a`). It is the sole poster
+  to the channel. No other chat or agent may post to it.
+- **No program job traffic, ever.** The backchannel carries only
+  Syncyard development and recovery work (for example: restart
+  the packaged tray in the owner's session, read `tray.log`,
+  restart a runner lane, run read-only network diagnostics).
+  Programs keep using the gatekeeper in all circumstances.
+- **Desktop side**: `backchannel/agent.sh` runs as a WSL systemd
+  user service (`syncyard-backchannel.service`) under the owner's
+  WSL user, independent of the runners, tray, and gatekeeper. It
+  syncs over git (no REST quota), executes only a command whose
+  id is new and whose sha256 matches its body, writes `out.json`
+  matched by id, and heartbeats every poll cycle (~60 s). A
+  `channels/syncyard-dev/STOP` file halts execution while the
+  heartbeat continues. Its log is
+  `~/syncyard-backchannel/agent.log` on the desktop. It never
+  writes gatekeeper queue records.
+- **Client**: `backchannel/bc.py heartbeat|status|send|wait`
+  (Python stdlib only). `send` packs a command through the GitHub
+  contents API — no local git, so it works during VM write waves —
+  refuses to overwrite an unacknowledged pending command unless
+  `--force`, stamps a unique id + the sha256 of the body, and
+  verifies by reading `cmd.json` back.
+- **Your part**: read-only. Use `bc.py heartbeat` / `status` for
+  the FR-005 status check when the gatekeeper is unreachable,
+  and report a stale heartbeat (>5 min) or a down tray/runner to
+  the Desktop Access chat. Operator doc: `backchannel/README.md`.
 
 ## Security rules that bind agents too
 

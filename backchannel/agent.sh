@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+# agent.sh - Syncyard failsafe backchannel agent (spec 009 FR-002/FR-004).
+#
+# Runs as a WSL systemd user service (syncyard-backchannel.service)
+# under tpierson on TRISTEN-DESKTOP. Independent of the Actions
+# runners, the Syncyard tray, and the gatekeeper.
+#
+# Loop (~60s): git pull the PRIVATE repo tbitcs/syncyard-backchannel,
+# check the STOP kill switch, execute channels/syncyard-dev/cmd.json
+# only if its id is new (and its sha256 matches its body), write
+# channels/syncyard-dev/out.json matched by id, write heartbeat.json,
+# commit + push out.json and heartbeat.json. Sync is over the git
+# protocol only - this loop burns no GitHub REST quota.
+#
+# The agent NEVER writes gatekeeper queue records. Queue access from
+# here is read-only status unless a command explicitly directs
+# otherwise (spec 009 FR-004).
+#
+# Layout:
+#   ~/syncyard-backchannel/agent.sh    this file (installed copy)
+#   ~/syncyard-backchannel/repo/       the channel repo clone
+#   ~/syncyard-backchannel/agent.log   full local log
+#   ~/syncyard-backchannel/.last_executed_id   local replay guard
+
+set -u
+
+BASE="${SYNCBC_BASE:-$HOME/syncyard-backchannel}"
+REPO_DIR="${SYNCBC_REPO_DIR:-$BASE/repo}"
+REPO_URL="${SYNCBC_REPO_URL:-https://github.com/tbitcs/syncyard-backchannel.git}"
+CHANNEL_REL="channels/syncyard-dev"
+POLL_S="${SYNCBC_POLL_S:-60}"
+DEFAULT_TIMEOUT_S="${SYNCBC_TIMEOUT_S:-600}"
+TAIL_BYTES="${SYNCBC_TAIL_BYTES:-8000}"
+LOG_FILE="$BASE/agent.log"
+LAST_ID_FILE="$BASE/.last_executed_id"
+
+mkdir -p "$BASE"
+
+log() {
+    printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+json_get() {
+    # json_get <file> <key> - print a string/number field or empty.
+    python3 - "$1" "$2" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        data = json.load(fh)
+    val = data.get(sys.argv[2], "")
+    print("" if val is None else val)
+except Exception:
+    print("")
+PY
+}
+
+write_heartbeat() {
+    # write_heartbeat <stopped 0|1>
+    local stopped="$1"
+    local last_id=""
+    [ -f "$LAST_ID_FILE" ] && last_id="$(cat "$LAST_ID_FILE" 2>/dev/null)"
+    python3 - "$REPO_DIR/$CHANNEL_REL/heartbeat.json" "$last_id" "$stopped" <<'PY' 2>/dev/null || true
+import json, os, socket, sys, datetime
+path, last_id, stopped = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+data = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "host": socket.gethostname(),
+    "user": os.environ.get("USER", ""),
+    "agent": "syncyard-backchannel",
+    "version": "0.2.0",
+    "last_executed_id": last_id or None,
+    "stopped": stopped,
+}
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=1, sort_keys=True)
+    fh.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+write_out() {
+    # write_out <id> <exit_code> <started> <stdout_file> <stderr_file>
+    python3 - "$REPO_DIR/$CHANNEL_REL/out.json" "$1" "$2" "$3" "$4" "$5" "$TAIL_BYTES" <<'PY' 2>/dev/null || true
+import datetime, json, os, sys
+path, cid, rc, started, out_f, err_f, tail = sys.argv[1:8]
+
+def tail_text(p, n):
+    try:
+        with open(p, "rb") as fh:
+            data = fh.read()
+        return data[-int(n):].decode("utf-8", "replace")
+    except Exception:
+        return ""
+
+data = {
+    "id": cid,
+    "exit_code": int(rc),
+    "state": "completed",
+    "started_at": started,
+    "finished_at": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "stdout_tail": tail_text(out_f, tail),
+    "stderr_tail": tail_text(err_f, tail),
+}
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=1, sort_keys=True)
+    fh.write("\n")
+os.replace(tmp, path)
+PY
+}
+
+push_channel_files() {
+    # Commit + push out.json / heartbeat.json if they changed.
+    git -C "$REPO_DIR" add -- "$CHANNEL_REL/out.json" "$CHANNEL_REL/heartbeat.json" 2>/dev/null || return 0
+    if git -C "$REPO_DIR" diff --cached --quiet 2>/dev/null; then
+        return 0
+    fi
+    git -C "$REPO_DIR" commit -q -m "backchannel: agent update $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE" 2>&1 || return 0
+    if ! git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1; then
+        log "push failed; will retry next cycle"
+        git -C "$REPO_DIR" pull --rebase -q >> "$LOG_FILE" 2>&1 || true
+        git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1 || log "push retry failed"
+    fi
+}
+
+ensure_repo() {
+    if [ -d "$REPO_DIR/.git" ]; then
+        return 0
+    fi
+    log "cloning $REPO_URL into $REPO_DIR"
+    git clone -q "$REPO_URL" "$REPO_DIR" >> "$LOG_FILE" 2>&1
+}
+
+execute_command() {
+    # execute_command <cmd.json path>
+    local cmd_file="$1"
+    local cid body claimed_sha timeout_s started rc
+    cid="$(json_get "$cmd_file" id)"
+    claimed_sha="$(json_get "$cmd_file" sha256)"
+    timeout_s="$(json_get "$cmd_file" timeout_s)"
+    [ -z "$timeout_s" ] && timeout_s="$DEFAULT_TIMEOUT_S"
+    case "$timeout_s" in *[!0-9]*) timeout_s="$DEFAULT_TIMEOUT_S" ;; esac
+
+    body="$(python3 - "$cmd_file" <<'PY' 2>/dev/null
+import json, sys
+with open(sys.argv[1], encoding="utf-8") as fh:
+    print(json.load(fh).get("body", ""), end="")
+PY
+)"
+    if [ -z "$cid" ] || [ -z "$body" ]; then
+        log "cmd.json unreadable or empty body; skipping"
+        return 0
+    fi
+
+    local actual_sha
+    actual_sha="$(printf '%s' "$body" | sha256sum | awk '{print $1}')"
+    started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    local out_tmp err_tmp
+    out_tmp="$(mktemp)"; err_tmp="$(mktemp)"
+
+    if [ -n "$claimed_sha" ] && [ "$claimed_sha" != "$actual_sha" ]; then
+        log "SHA MISMATCH id=$cid claimed=$claimed_sha actual=$actual_sha - not executing"
+        printf 'backchannel: sha256 mismatch, command not executed\n' > "$err_tmp"
+        write_out "$cid" 65 "$started" "$out_tmp" "$err_tmp"
+        printf '%s' "$cid" > "$LAST_ID_FILE"
+        rm -f "$out_tmp" "$err_tmp"
+        return 0
+    fi
+
+    log "executing id=$cid timeout_s=$timeout_s sha256=$actual_sha"
+    printf '%s' "$body" > "$BASE/.current-command.sh"
+    timeout "$timeout_s" bash "$BASE/.current-command.sh" > "$out_tmp" 2> "$err_tmp"
+    rc=$?
+    log "finished id=$cid exit_code=$rc"
+    write_out "$cid" "$rc" "$started" "$out_tmp" "$err_tmp"
+    printf '%s' "$cid" > "$LAST_ID_FILE"
+    rm -f "$out_tmp" "$err_tmp" "$BASE/.current-command.sh"
+    return 0
+}
+
+main_loop() {
+    log "agent starting (base=$BASE repo=$REPO_DIR poll_s=$POLL_S)"
+    while true; do
+        if ! ensure_repo; then
+            log "clone failed; retrying next cycle"
+            sleep "$POLL_S"
+            continue
+        fi
+        mkdir -p "$REPO_DIR/$CHANNEL_REL"
+        git -C "$REPO_DIR" pull -q --ff-only >> "$LOG_FILE" 2>&1 || log "pull failed (continuing with local state)"
+
+        local stopped=0
+        if [ -f "$REPO_DIR/$CHANNEL_REL/STOP" ]; then
+            stopped=1
+            log "STOP file present; execution halted, heartbeat continues"
+        fi
+
+        if [ "$stopped" -eq 0 ] && [ -f "$REPO_DIR/$CHANNEL_REL/cmd.json" ]; then
+            local cid last_id=""
+            cid="$(json_get "$REPO_DIR/$CHANNEL_REL/cmd.json" id)"
+            [ -f "$LAST_ID_FILE" ] && last_id="$(cat "$LAST_ID_FILE" 2>/dev/null)"
+            if [ -n "$cid" ] && [ "$cid" != "$last_id" ]; then
+                execute_command "$REPO_DIR/$CHANNEL_REL/cmd.json" || log "execute_command error (continuing)"
+            fi
+        fi
+
+        write_heartbeat "$stopped"
+        push_channel_files
+        sleep "$POLL_S"
+    done
+}
+
+main_loop
