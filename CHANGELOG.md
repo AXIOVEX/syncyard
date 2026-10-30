@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 010 — public release program (owner direction,
+  2026-10-30): configurability as a single config file (lane
+  count/names, watermarks, budgets, endpoints, transport
+  ceiling), a tested host matrix (Windows, WSL2, macOS, Linux,
+  Docker), permanent backchannel hardening (self-test, stale
+  alarm, chaos battery), an agent skills pack with Meta Muse
+  as the primary vehicle, per-requirement test batteries, a
+  shipped security posture, and release 0.3.0 when green. A
+  GitHub `gh`-adoption pitch brief is prepared under FR-011
+  and is not sent without the owner's explicit word. Specified
+  only in this change; implementation follows in phases.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel
