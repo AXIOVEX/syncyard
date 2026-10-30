@@ -7,3 +7,6 @@ gatekeeper/queue/
 gatekeeper/ledger.jsonl
 gatekeeper/sweep.log
 gatekeeper/.sweep.lock/
+
+# gatekeeper test scratch
+gatekeeper/test-tmp/

@@ -1,0 +1,113 @@
+# Syncyard configuration — example expressing the original
+# production fleet exactly (spec 010 FR-001 golden fixture).
+# Copy to `syncyard.yaml` beside the gatekeeper and edit.
+# Every key is optional: an absent key falls back to the
+# built-in default, which is the value shown here unless a
+# comment says otherwise. An invalid file fails closed with a
+# named error — the gatekeeper never guesses.
+#
+# Types: hosts are windows | wsl2 | macos | linux | docker
+# (spec 010 FR-003). This fleet has one Windows host and its
+# WSL2 distro.
+
+version: 1
+
+# Repositories. door_repo is the PRIVATE repo whose workflows
+# dispatch to your runners; project_repo is this project.
+door_repo: tbitcs/desktop-runner
+project_repo: AXIOVEX/syncyard
+
+# GitHub API discipline. The fleet budget is one account-wide
+# bucket; the sweep stands down rather than starve it.
+budget:
+  standdown_remaining: 1000   # below this: no dispatch
+  critical_remaining: 500     # below this: no list call either
+  reserve_for_completion: 0   # extra headroom kept for harvests
+
+# Dispatch behaviour.
+dispatch:
+  max_active_dispatched: 2    # global cap (pre-lanes fleets)
+  stale_dispatching_min: 10   # dispatching older than this is flagged
+  lock_stale_min: 10
+  duplicate_policy: refuse    # refuse | allow (same --key while active)
+  soft_cap_min: 30            # jobs expected longer are announced first
+
+# Script transport. Workflow inputs have a practical size
+# ceiling (~54 KB observed); larger scripts must use the
+# chunked transport helper (tools/chunked_transport).
+transport:
+  max_script_bytes: 49152
+
+# Marker verdicts: a completed run's verdict lines match this
+# pattern at line start. Verdicts come from markers, never
+# from the run's success colour.
+markers:
+  pattern: "^[A-Z][A-Z0-9_]{2,}([ :]|$)"
+
+# Hosts. Each host names its type and its default working
+# directories per workflow. `desktop` is the fleet's Windows
+# host; `desktop-wsl` is its WSL2 distro, reached through it.
+hosts:
+  desktop:
+    type: windows
+    cwd:
+      run.yml: "C:\\Users\\trist"
+      grab.yml: null
+  desktop-wsl:
+    type: wsl2
+    via: desktop
+    distro: Ubuntu-24.04
+    cwd:
+      wsl.yml: /home/tpierson
+
+# Workflows available for dispatch, by file name.
+workflows:
+  - run.yml
+  - wsl.yml
+  - grab.yml
+
+# Lanes (spec 010 FR-002). Count and names are configuration.
+# concurrency is 1 (serial) unless a lane says otherwise.
+# Watermarks are minutes: queued/executing (warn, escalate);
+# executing mode is `fixed` (table values) or `expectation`
+# (the job's declared expectation scaled, floored by `floor`).
+lanes:
+  quick:
+    host: desktop
+    runner_label: lane-quick
+    queued: [10, 30]
+    executing:
+      mode: fixed
+      values: [5, 15]
+  normal:
+    host: desktop
+    runner_label: lane-normal
+    queued: [20, 45]
+    executing:
+      mode: fixed
+      values: [45, 90]
+  long:
+    host: desktop
+    runner_label: lane-long
+    queued: [45, 120]
+    executing:
+      mode: expectation
+      floor: [90, 180]
+  gpu:
+    host: desktop
+    runner_label: lane-gpu
+    queued: [30, 90]
+    executing:
+      mode: expectation
+      floor: [120, 240]
+
+# Notification endpoints (spec 010 FR-007). Programs register
+# an endpoint name on submit; the outbox delivers per type.
+# type chat = a Muse chat id (this fleet's vehicle);
+# other types: webhook (URL), file (append path),
+# command (argv prefix receiving the message on stdin).
+endpoints: {}
+
+# Retention.
+retention:
+  human_log_max_bytes: 1000000

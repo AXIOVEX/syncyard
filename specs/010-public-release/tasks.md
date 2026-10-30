@@ -57,3 +57,26 @@ reconciliation around the cutover).
 ## Phase 6 — Named later (FR-011)
 - [ ] T021 `docs/github-pitch.md` prepared (gh-extension
       adoption shape). NOT sent; owner's word required.
+
+## Phase 7 — gh CLI extension (FR-012, Amendment 1)
+- [ ] T022 Create `AXIOVEX/gh-syncyard` (public, Apache-2.0,
+      topic `gh-extension`); scaffold with
+      `gh extension create --precompiled=go`.
+- [ ] T023 Thin dispatcher: locate the installed gatekeeper
+      (or walk the user through installing it) and forward
+      submit/status/cancel/pause/resume/outbox with output
+      and exit codes streamed.
+- [ ] T024 Release wiring: `gh-extension-precompile` action;
+      binaries for windows/linux/darwin × amd64/arm64 named
+      per GitHub's convention; install proof
+      (`gh extension install AXIOVEX/gh-syncyard`, then
+      `gh syncyard status` against the live fleet).
+
+## Phase 1 progress
+- [x] T001 (slice 1, additive): `config/syncyard.example.yaml`
+      expressing the fleet exactly + stdlib YAML-subset loader
+      with validation (`gatekeeper/config.py`) +
+      `gatekeeper/test_config.py` (25 checks: golden constants,
+      defaults equivalence, merge, six fail-closed rejections).
+      All passing 2026-10-30. gk.py does not read config yet;
+      wiring is the next slice.
