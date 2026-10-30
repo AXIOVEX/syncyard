@@ -361,3 +361,19 @@ or blocked. It is deliberately narrow:
 - Never commit a token or credential anywhere in this repository.
   Registration tokens are fetched at setup time and used once.
 - Runners register to this repository only, never organization-wide.
+
+## Spec 010 — public release program (specified 2026-10-30)
+
+Owner direction: make Syncyard a general open-source project —
+a real configuration system (lane count/names and adopter knobs
+as config, spec 010 FR-001/002/007), a tested host matrix
+(Windows, WSL2, macOS, Linux, Docker; FR-003/004), the
+backchannel kept permanently robust (FR-005), an agent skills
+pack with Meta Muse as the primary vehicle (FR-006), tests for
+all of it (FR-008), the security posture shipped as a document
+(FR-009), and release 0.3.0 when green (FR-010). A GitHub
+`gh`-adoption pitch brief is prepared under FR-011 and is
+**not sent** without the owner's explicit word. Until the
+Phase 1 config cutover lands, today's constants and conventions
+in this file remain the live behavior; spec text lives at
+`specs/010-public-release/`.
