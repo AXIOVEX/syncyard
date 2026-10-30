@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""Syncyard configuration loader (spec 010 FR-001/FR-002/FR-007).
+
+Stdlib only, like the rest of the gatekeeper. Reads
+`syncyard.yaml` (or a path given by the caller / SYNCARD_CONFIG)
+and produces the effective configuration: file values where
+present, built-in defaults everywhere else. The defaults ARE
+the pre-config constants, so a fleet with no config file
+behaves exactly as before.
+
+The YAML support is a deliberate subset — nested block maps,
+block scalar lists, inline [a, b] lists, and scalar values
+(string / int / float / bool / null), with # comments. Anything
+outside the subset raises ConfigError naming the line: the
+loader fails closed, it never guesses.
+
+Validation (load time, all named errors):
+  - version, when present, must be 1
+  - lane names unique (a mapping cannot repeat a key at all —
+    the parser rejects duplicate keys in any map)
+  - every lane's host exists in hosts
+  - watermark pairs are (warn, escalate) with warn < escalate
+  - executing mode is fixed (needs values) or expectation
+    (needs floor)
+  - budget critical < standdown
+  - transport ceiling positive
+"""
+import os
+import re
+
+CONFIG_FILENAME = "syncyard.yaml"
+ENV_VAR = "SYNCARD_CONFIG"
+
+
+class ConfigError(Exception):
+    pass
+
+
+# --- Built-in defaults: the pre-config constants, verbatim. ---
+DEFAULTS = {
+    "version": 1,
+    "door_repo": "tbitcs/desktop-runner",
+    "project_repo": "AXIOVEX/syncyard",
+    "budget": {
+        "standdown_remaining": 1000,
+        "critical_remaining": 500,
+        "reserve_for_completion": 0,
+    },
+    "dispatch": {
+        "max_active_dispatched": 2,
+        "stale_dispatching_min": 10,
+        "lock_stale_min": 10,
+        "duplicate_policy": "refuse",
+        "soft_cap_min": 30,
+    },
+    "transport": {"max_script_bytes": 49152},
+    "markers": {"pattern": r"^[A-Z][A-Z0-9_]{2,}([ :]|$)"},
+    "hosts": {
+        "desktop": {
+            "type": "windows",
+            "cwd": {"run.yml": r"C:\Users\trist", "grab.yml": None},
+        },
+        "desktop-wsl": {
+            "type": "wsl2",
+            "via": "desktop",
+            "distro": "Ubuntu-24.04",
+            "cwd": {"wsl.yml": "/home/tpierson"},
+        },
+    },
+    "workflows": ["run.yml", "wsl.yml", "grab.yml"],
+    "lanes": {
+        "quick": {"host": "desktop", "runner_label": "lane-quick",
+                  "concurrency": 1, "queued": [10, 30],
+                  "executing": {"mode": "fixed", "values": [5, 15]}},
+        "normal": {"host": "desktop", "runner_label": "lane-normal",
+                   "concurrency": 1, "queued": [20, 45],
+                   "executing": {"mode": "fixed", "values": [45, 90]}},
+        "long": {"host": "desktop", "runner_label": "lane-long",
+                 "concurrency": 1, "queued": [45, 120],
+                 "executing": {"mode": "expectation", "floor": [90, 180]}},
+        "gpu": {"host": "desktop", "runner_label": "lane-gpu",
+                "concurrency": 1, "queued": [30, 90],
+                "executing": {"mode": "expectation", "floor": [120, 240]}},
+    },
+    "endpoints": {},
+    "retention": {"human_log_max_bytes": 1000000},
+}
+
+HOST_TYPES = ("windows", "wsl2", "macos", "linux", "docker")
+
+
+# --- Restricted YAML-subset parser --------------------------------
+
+def _scalar(tok, lineno):
+    tok = tok.strip()
+    if tok == "":
+        return None
+    if tok.startswith("[") and tok.endswith("]"):
+        inner = tok[1:-1].strip()
+        if not inner:
+            return []
+        return [_scalar(part, lineno) for part in _split_inline(inner, lineno)]
+    if tok.startswith('"') and tok.endswith('"') and len(tok) >= 2:
+        return tok[1:-1].replace('\\"', '"').replace("\\\\", "\\")
+    if tok.startswith("'") and tok.endswith("'") and len(tok) >= 2:
+        return tok[1:-1].replace("''", "'")
+    low = tok.lower()
+    if low in ("null", "~"):
+        return None
+    if low in ("true", "false"):
+        return low == "true"
+    try:
+        return int(tok)
+    except ValueError:
+        pass
+    try:
+        return float(tok)
+    except ValueError:
+        pass
+    if ":" in tok and not tok.startswith(("http://", "https://")):
+        # A bare colon inside an unquoted scalar is outside the subset;
+        # paths like C:\Users are fine (no colon-space), URLs exempted.
+        if ": " in tok:
+            raise ConfigError(f"line {lineno}: unquoted scalar contains ': ' — quote it")
+    return tok
+
+
+def _split_inline(inner, lineno):
+    parts, depth, cur, quote = [], 0, "", None
+    for ch in inner:
+        if quote:
+            cur += ch
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            cur += ch
+        elif ch == "[":
+            depth += 1
+            cur += ch
+        elif ch == "]":
+            depth -= 1
+            cur += ch
+        elif ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if quote:
+        raise ConfigError(f"line {lineno}: unterminated quote in inline list")
+    parts.append(cur)
+    return parts
+
+
+def parse_yaml_subset(text):
+    """Parse the restricted subset into nested dicts/lists."""
+    lines = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        stripped = _strip_comment(raw).rstrip()
+        if not stripped.strip():
+            continue
+        indent = len(raw) - len(raw.lstrip(" "))
+        if "\t" in raw[:indent + 1]:
+            raise ConfigError(f"line {lineno}: tab indentation is not supported")
+        lines.append((indent, stripped.strip(), lineno))
+    if not lines:
+        return {}
+    pos = [0]
+
+    def parse_block(indent):
+        # Decide map vs list by the first line at this indent.
+        first = lines[pos[0]]
+        if first[1].startswith("- "):
+            out = []
+            while pos[0] < len(lines):
+                ind, content, lineno = lines[pos[0]]
+                if ind != indent or not content.startswith("- "):
+                    break
+                item = content[2:].strip()
+                pos[0] += 1
+                if item == "":
+                    out.append(parse_block(_next_indent(indent)))
+                elif ":" in item and not item.startswith(('"', "'")):
+                    # Inline first pair of a map inside a list item:
+                    # outside the subset on purpose.
+                    raise ConfigError(
+                        f"line {lineno}: maps inside list items are outside the supported subset")
+                else:
+                    out.append(_scalar(item, lineno))
+            return out
+        out = {}
+        while pos[0] < len(lines):
+            ind, content, lineno = lines[pos[0]]
+            if ind != indent or content.startswith("- "):
+                break
+            if ":" not in content:
+                raise ConfigError(f"line {lineno}: expected 'key: value'")
+            key, _, rest = content.partition(":")
+            key = key.strip().strip('"').strip("'")
+            if key in out:
+                raise ConfigError(f"line {lineno}: duplicate key {key!r}")
+            rest = rest.strip()
+            pos[0] += 1
+            if rest == "":
+                if pos[0] < len(lines) and lines[pos[0]][0] > indent:
+                    out[key] = parse_block(lines[pos[0]][0])
+                else:
+                    out[key] = None
+            else:
+                out[key] = _scalar(rest, lineno)
+        return out
+
+    def _next_indent(indent):
+        if pos[0] < len(lines):
+            return lines[pos[0]][0]
+        return indent
+
+    result = parse_block(lines[0][0])
+    if pos[0] != len(lines):
+        raise ConfigError(f"line {lines[pos[0]][2]}: inconsistent indentation")
+    if not isinstance(result, dict):
+        raise ConfigError("top level of the config must be a mapping")
+    return result
+
+
+def _strip_comment(raw):
+    """Remove a trailing # comment, honoring single/double quotes."""
+    out, quote = [], None
+    for ch in raw:
+        if quote:
+            out.append(ch)
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+            out.append(ch)
+        elif ch == "#":
+            break
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+# --- Merge + validation -------------------------------------------
+
+def _deep_merge(base, over):
+    if isinstance(base, dict) and isinstance(over, dict):
+        out = dict(base)
+        for k, v in over.items():
+            out[k] = _deep_merge(base.get(k), v) if k in base else v
+        return out
+    return over
+
+
+def _check_pair(value, where):
+    if (not isinstance(value, list) or len(value) != 2
+            or not all(isinstance(x, (int, float)) for x in value)):
+        raise ConfigError(f"{where}: watermark must be [warn, escalate] in minutes")
+    if not value[0] < value[1]:
+        raise ConfigError(f"{where}: warn ({value[0]}) must be < escalate ({value[1]})")
+
+
+def validate(cfg):
+    if cfg.get("version") != 1:
+        raise ConfigError(f"version must be 1, got {cfg.get('version')!r}")
+    budget = cfg.get("budget") or {}
+    if not (budget.get("critical_remaining", 0) < budget.get("standdown_remaining", 0)):
+        raise ConfigError("budget.critical_remaining must be < budget.standdown_remaining")
+    if (cfg.get("transport") or {}).get("max_script_bytes", 0) <= 0:
+        raise ConfigError("transport.max_script_bytes must be positive")
+    hosts = cfg.get("hosts") or {}
+    for name, host in hosts.items():
+        if not isinstance(host, dict) or host.get("type") not in HOST_TYPES:
+            raise ConfigError(f"hosts.{name}: type must be one of {HOST_TYPES}")
+        if host.get("type") == "wsl2" and host.get("via") not in hosts:
+            raise ConfigError(f"hosts.{name}: wsl2 host needs a `via` naming another host")
+    lanes = cfg.get("lanes") or {}
+    if not lanes:
+        raise ConfigError("at least one lane is required")
+    for name, lane in lanes.items():
+        if not isinstance(lane, dict):
+            raise ConfigError(f"lanes.{name}: must be a mapping")
+        if lane.get("host") not in hosts:
+            raise ConfigError(f"lanes.{name}: unknown host {lane.get('host')!r}")
+        _check_pair(lane.get("queued"), f"lanes.{name}.queued")
+        ex = lane.get("executing") or {}
+        mode = ex.get("mode")
+        if mode == "fixed":
+            _check_pair(ex.get("values"), f"lanes.{name}.executing.values")
+        elif mode == "expectation":
+            _check_pair(ex.get("floor"), f"lanes.{name}.executing.floor")
+        else:
+            raise ConfigError(f"lanes.{name}.executing.mode must be fixed|expectation")
+        if lane.get("concurrency", 1) < 1:
+            raise ConfigError(f"lanes.{name}.concurrency must be >= 1")
+    dp = (cfg.get("dispatch") or {}).get("duplicate_policy")
+    if dp not in ("refuse", "allow"):
+        raise ConfigError("dispatch.duplicate_policy must be refuse|allow")
+    try:
+        re.compile((cfg.get("markers") or {}).get("pattern", ""))
+    except re.error as e:
+        raise ConfigError(f"markers.pattern does not compile: {e}")
+    return cfg
+
+
+def load_config(path=None):
+    """Effective config: file (if any) deep-merged over defaults, validated."""
+    path = path or os.environ.get(ENV_VAR)
+    if path is None:
+        # Default location: beside this file (the gatekeeper dir).
+        candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 CONFIG_FILENAME)
+        path = candidate if os.path.isfile(candidate) else None
+    merged = _deep_merge(DEFAULTS, {})
+    if path is not None:
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                parsed = parse_yaml_subset(f.read())
+        except OSError as e:
+            raise ConfigError(f"cannot read config {path}: {e}")
+        merged = _deep_merge(merged, parsed)
+    return validate(merged)
+
+
+if __name__ == "__main__":
+    import json
+    import sys
+    try:
+        cfg = load_config(sys.argv[1] if len(sys.argv) > 1 else None)
+    except ConfigError as e:
+        print(f"CONFIG_ERROR {e}")
+        sys.exit(1)
+    print(json.dumps(cfg, indent=1, sort_keys=True))

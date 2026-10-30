@@ -20,7 +20,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Python syntax check (gatekeeper)
-        run: python3 -m py_compile gatekeeper/gk.py
+        run: python3 -m py_compile gatekeeper/gk.py gatekeeper/config.py
+
+      - name: Python batteries (config golden + FR-013)
+        run: |
+          python3 gatekeeper/test_config.py
+          python3 gatekeeper/test_fr013.py
 
       - name: Gatekeeper offline smoke test
         run: |

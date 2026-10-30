@@ -377,3 +377,16 @@ all of it (FR-008), the security posture shipped as a document
 Phase 1 config cutover lands, today's constants and conventions
 in this file remain the live behavior; spec text lives at
 `specs/010-public-release/`.
+
+Amendment 1 (2026-10-30): **FR-012** — Syncyard also ships as
+a GitHub CLI extension from `AXIOVEX/gh-syncyard` (`gh syncyard
+...`); a thin Go dispatcher over the Python gatekeeper,
+cross-compiled release binaries via GitHub's official
+precompile action. **FR-006 editions are ranked by agent
+market share:** Meta Muse primary, then Claude Code, GitHub
+Copilot, OpenAI Codex/ChatGPT, Cursor, Gemini/Antigravity,
+generic + CLI-only. Phase 1 slice 1 has landed additively:
+`config/syncyard.example.yaml` + `gatekeeper/config.py`
+(stdlib loader, validation, golden-tested against the live
+constants by `gatekeeper/test_config.py`); `gk.py` does not
+read config yet.

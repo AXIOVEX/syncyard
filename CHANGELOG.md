@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   GitHub `gh`-adoption pitch brief is prepared under FR-011
   and is not sent without the owner's explicit word. Specified
   only in this change; implementation follows in phases.
+- Spec 010 Amendment 1 (2026-10-30): FR-012 ships Syncyard as
+  a GitHub CLI extension (`AXIOVEX/gh-syncyard`, thin Go
+  dispatcher, official precompile action); FR-006 agent-skill
+  editions ranked by market share (Meta Muse primary, Claude
+  Code, Copilot, Codex/ChatGPT, Cursor, Gemini/Antigravity,
+  generic). Phase 1 slice 1: `config/syncyard.example.yaml` +
+  `gatekeeper/config.py` loader/validator with the
+  `test_config.py` golden battery (25 checks, all passing);
+  additive — the gatekeeper does not read config yet.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel

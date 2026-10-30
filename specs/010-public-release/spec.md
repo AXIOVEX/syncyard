@@ -186,3 +186,36 @@ word**, which has not been given.
   FR-006-of-spec-009 shape: queue snapshot before, set equality
   after).
 - Every battery in FR-008 is green in CI for the 0.3.0 tag.
+
+## Amendment 1 (2026-10-30, owner order) — FR-012 + FR-006 ranking
+
+- **FR-012 gh CLI extension.** Syncyard ships as a GitHub CLI
+  extension from a dedicated repository, `AXIOVEX/gh-syncyard`
+  (the `gh-` prefix is GitHub's hard requirement; the command
+  is `gh syncyard ...`). Per GitHub's creating-extensions
+  guide: releases carry precompiled binaries named
+  `gh-syncyard-<os>-<arch>[.exe]` for windows/linux/darwin ×
+  amd64/arm64, cross-built by the official
+  `gh-extension-precompile` action; the repo carries the
+  `gh-extension` topic for discovery. The extension is a thin
+  dispatcher (small Go binary, GitHub's scaffolded shape) that
+  forwards submit/status/cancel/pause/resume/outbox to the
+  installed Python gatekeeper — the gatekeeper core is not
+  rewritten (standing non-goal). Install:
+  `gh extension install AXIOVEX/gh-syncyard`. FR-011's pitch
+  brief points at this working extension as the adoption
+  on-ramp.
+- **FR-006 ranking fixed by market share (2026-10-30).**
+  Editions in support order: (1) Meta Muse — primary vehicle
+  (owner's daily work, first-class regardless of share);
+  (2) Claude Code (Stack Overflow 2026: ~66% of agent users;
+  First Page Sage primary share ~29%); (3) GitHub Copilot
+  (JetBrains Jan 2026 workplace adoption 29%, the highest
+  single figure; ~59% Stack Overflow); (4) OpenAI Codex /
+  ChatGPT (~30% Stack Overflow; primary ~12% and rising);
+  (5) Cursor (~26% Stack Overflow; ~13–18% workplace);
+  (6) Google Gemini / Antigravity + Gemini Code Assist
+  (~15–16%); (7) generic-agent edition + CLI-only fallback.
+  All editions generate from one shared source so content
+  cannot drift; the ranking is re-checkable against its
+  cited surveys as the market moves.
