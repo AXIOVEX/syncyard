@@ -1,7 +1,0 @@
-{
-  "flags": [],
-  "id": "20260101T000000Z-test-job-abc123",
-  "key": "test-job",
-  "program": "test",
-  "state": "dispatched"
-}
