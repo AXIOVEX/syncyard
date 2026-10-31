@@ -373,9 +373,11 @@ pack with Meta Muse as the primary vehicle (FR-006), tests for
 all of it (FR-008), the security posture shipped as a document
 (FR-009), and release 0.3.0 when green (FR-010). A GitHub
 `gh`-adoption pitch brief is prepared under FR-011 and is
-**not sent** without the owner's explicit word. Until the
-Phase 1 config cutover lands, today's constants and conventions
-in this file remain the live behavior; spec text lives at
+**not sent** without the owner's explicit word. The Phase 1
+config cutover LANDED 2026-10-31: the fleet gatekeeper binds
+its constants from the effective config (fleet
+`syncyard.yaml` beside gk.py, values identical to the
+constants it replaced — golden-proven); spec text lives at
 `specs/010-public-release/`.
 
 Amendment 1 (2026-10-30): **FR-012** — Syncyard also ships as

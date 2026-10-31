@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gatekeeper/test_golden.py` proves byte-identical
   dispatch decisions under defaults vs the fleet config,
   and runs in CI.
+- Spec 010 Phase 1 COMPLETE (T005, 2026-10-31): the fleet
+  gatekeeper now runs on the configuration system — wired
+  code deployed behind a queue snapshot (534 records,
+  open-set 5) with exact reconciliation, and the fleet
+  `syncyard.yaml` in place beside the gatekeeper.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel
