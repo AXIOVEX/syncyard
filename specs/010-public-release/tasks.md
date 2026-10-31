@@ -219,3 +219,17 @@ reconciliation around the cutover).
       heartbeat. The chaos battery's fixed-sleep phases were
       hardened to polled waits after one flaky run; two
       consecutive full passes followed.
+- [x] Diagnosis addendum (2026-10-31, bc-diag job
+      20261031T111446Z-bc-diag-20261031-0f809b): the desktop
+      agent.log shows the agent RESTARTING roughly every
+      600 s all morning (starts 10:05:56Z through 11:19:11Z,
+      two interleaved cadences) — so the unbounded-pull
+      reading above is at most part of the story: the stall
+      window holds two starts (11:05:57Z, 11:15:57Z) yet the
+      remote heartbeat only moved at the 11:19:11Z start.
+      Root cause stays OPEN until the Phase 3 deploy job
+      captures the systemd journal, the unit's restart count,
+      and the linger state. The chaos battery's restart phase
+      was also hardened (it waited on a stale heartbeat ts and
+      raced the restarted agent — the PR #26 CI flake); three
+      consecutive local passes, 18 checks.
