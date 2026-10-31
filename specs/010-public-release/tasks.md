@@ -7,9 +7,9 @@ source the fleet runs on (spec 009 FR-006 snapshot +
 reconciliation around the cutover).
 
 ## Phase 1 — Configuration (FR-001, FR-002, FR-007)
-- [ ] T001 `syncyard.yaml` schema + checked-in example config
+- [x] T001 `syncyard.yaml` schema + checked-in example config
       expressing the current production fleet exactly.
-- [ ] T002 Gatekeeper config loader (stdlib only): file →
+- [x] T002 Gatekeeper config loader (stdlib only): file →
       effective config; absent keys fall back to today's
       constants; invalid config fails closed with a named
       error, never a silent default.
@@ -56,8 +56,8 @@ reconciliation around the cutover).
 - [x] T017 SECURITY.md posture + adopter checklist; README
       links it above the quickstart.
 - [x] T018 README story + per-host quickstarts.
-- [ ] T019 Full battery wiring in CI; all green.
-- [ ] T020 CHANGELOG + VERSION 0.3.0 + release.
+- [x] T019 Full battery wiring in CI; all green.
+- [x] T020 CHANGELOG + VERSION 0.3.0 + release.
 
 ## Phase 6 — Named later (FR-011)
 - [ ] T021 `docs/github-pitch.md` prepared (gh-extension
@@ -329,3 +329,16 @@ reconciliation around the cutover).
       extension and the skills editions gained the pointers
       the README previously lacked. T019 (full battery gate)
       and T020 (0.3.0) remain.
+- **Phase 5 complete** (2026-10-31, T019 + T020): every
+      battery (config, golden, workflow contract, transport
+      smoke, backchannel unit + chaos, skills) is wired into
+      CI and green on the release PR; VERSION is 0.3.0, the
+      eight skill editions regenerated from the contract at
+      0.3.0 (test_skills ALL PASS), the CHANGELOG's
+      [Unreleased] entries moved under [0.3.0] - 2026-10-31,
+      and the GitHub release v0.3.0 is cut from that section.
+      Bookkeeping drift closed in the same pass: the Phase 1
+      T001/T002 checkboxes now match their progress notes.
+      Spec 010 is complete except Phase 6 (FR-011, the
+      GitHub pitch brief — prepared only, sent solely on the
+      owner's explicit word).
