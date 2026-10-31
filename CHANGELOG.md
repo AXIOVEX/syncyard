@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 011 — shutdown protection and recovery (owner
+  direction, 2026-10-31): a host-side shutdown guard that
+  delays a non-forced shutdown while active work drains
+  (bounded checkpoint window, going-down record written
+  first with the affected run ids, outbox notification),
+  boot recovery that returns runners without an interactive
+  logon (boot shape is an owner gate — service-mode would
+  amend spec 007 FR-003), a generalized supervised-work
+  vehicle from the production anchor pattern, gatekeeper
+  reconciliation of every interrupted run against GitHub's
+  terminal state, and a recovery report that states loss
+  plainly. The spec's protection level is delay + drain +
+  checkpoint + notify, never prevent — forced shutdowns and
+  power loss are named outside the envelope. Specified only
+  in this change; implementation follows in phases.
 - Spec 010 Phase 4 (FR-006) — the agent skills pack:
   `skills/` ships eight editions generated from one shared
   source (`skills/_source/contract.md` via
