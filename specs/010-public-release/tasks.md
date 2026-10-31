@@ -53,9 +53,9 @@ reconciliation around the cutover).
       (`skills/test_skills.py`, wired into ci.yml).
 
 ## Phase 5 — Docs, tests, release (FR-008, FR-009, FR-010)
-- [ ] T017 SECURITY.md posture + adopter checklist; README
+- [x] T017 SECURITY.md posture + adopter checklist; README
       links it above the quickstart.
-- [ ] T018 README story + per-host quickstarts.
+- [x] T018 README story + per-host quickstarts.
 - [ ] T019 Full battery wiring in CI; all green.
 - [ ] T020 CHANGELOG + VERSION 0.3.0 + release.
 
@@ -289,3 +289,43 @@ reconciliation around the cutover).
       generator drift check. `skills/README.md` indexes the
       editions and the regenerate/check commands. Spec 010
       Phase 4 (FR-006) is COMPLETE in the repo.
+
+## Phase 5 progress
+- [x] T017 + T018 (2026-10-31): SECURITY.md grew from the
+      reporting policy into the shipped posture document —
+      the FR-009 invariant verbatim at the top of the posture
+      section (the sentence the skills battery pins in every
+      edition), the posture in plain language (hosted-only
+      CI; self-hosted runners behind gatekeeper
+      workflow_dispatch only; the gatekeeper's FR-012/FR-013
+      verified-write + atomic-swap rules and exactly-once
+      dispatch as security rules; the backchannel as
+      dev/recovery only, carrying no job traffic), the
+      original load-bearing rules kept, and two adopter
+      checklists (token scoping: one credential per purpose,
+      door-scoped, registration tokens minted-and-gone, no
+      tokens in job scripts; runner isolation: dedicated
+      ordinary user, workbench-not-vault host, door repo
+      private, repo-scoped registration, write access treated
+      as a key list). README reworked to the FR-010 shape:
+      the two-minute story (problem, scars — verified writes
+      after silent write corruption, marker verdicts over run
+      colors, the transport ceiling, the dispatch-only
+      invariant — and the deliberate non-goals, spec 011's
+      delay + drain + checkpoint + notify, never prevent,
+      first among them), the security section carrying the
+      invariant and linking SECURITY.md above the quickstart,
+      and per-host quickstarts (Windows, WSL2 via its Windows
+      host, Linux, macOS, Docker) each with prerequisites,
+      its door workflows, the lane → host route a job takes,
+      and its honest limits. The WSL2 quickstart carries the
+      fleet's hard staging rule — cross-job payloads are
+      NEVER staged in the venue's /tmp (it does not persist
+      between jobs on WSL; proven in the field 2026-10-31) —
+      stage in the WSL home directory or the job's working
+      tree; the rule is repeated in the fleet-discipline
+      summary. Existing README content kept (lanes,
+      discipline, layout, versioning); the gh-syncyard
+      extension and the skills editions gained the pointers
+      the README previously lacked. T019 (full battery gate)
+      and T020 (0.3.0) remain.
