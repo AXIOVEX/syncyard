@@ -43,6 +43,9 @@ LANES_LIVE_FILE = os.path.join(BASE, "LANES_LIVE")
 
 REPO = "tbitcs/desktop-runner"
 PROJECT_REPO = "AXIOVEX/syncyard"   # canonical project repo (status --repo)
+BC_REPO = "tbitcs/syncyard-backchannel"  # failsafe backchannel (spec 009)
+BC_HEARTBEAT_PATH = "channels/syncyard-dev/heartbeat.json"
+BC_STALE_S = 300                         # heartbeat older = stale alarm
 HLOG = os.path.join(BASE, "gatekeeper.log")   # human-readable rotating log
 HLOG_MAX_BYTES = 1000000
 
@@ -1375,6 +1378,32 @@ def repo_health():
         print("  dependabot PRs: unavailable")
 
 
+def backchannel_status_line():
+    """One status line for the failsafe backchannel (spec 010 T011):
+    heartbeat age from the channel repo, with a stale alarm past
+    BC_STALE_S. Fail-soft: any read error reports 'unknown', never
+    breaks status. Costs one contents-API call per status run."""
+    data, err = gh_json(["api", "repos/%s/contents/%s"
+                         % (BC_REPO, BC_HEARTBEAT_PATH)])
+    if err or not data:
+        return "backchannel: heartbeat unknown (%s)" % (err or "empty response")
+    try:
+        hb = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
+        ts = datetime.strptime(hb["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    except Exception as e:
+        return "backchannel: heartbeat unreadable (%s)" % e
+    age = int((datetime.now(timezone.utc) - ts).total_seconds())
+    st = hb.get("self_test") or {}
+    st_txt = "ok" if st.get("ok") else ("FAILED" if st else "absent")
+    line = ("backchannel: heartbeat %ds old host=%s stopped=%s self_test=%s"
+            % (age, hb.get("host"), hb.get("stopped"), st_txt))
+    if age > BC_STALE_S:
+        line = ("!! BACKCHANNEL STALE: heartbeat %ds old (limit %ds) — %s"
+                % (age, BC_STALE_S, line))
+    return line
+
+
 def cmd_status(args):
     jobs = load_jobs()
     by_state = {}
@@ -1390,6 +1419,7 @@ def cmd_status(args):
         print("!! PAUSED since %s — %s (program dispatch held; "
               "maintenance jobs still flow)"
               % (ps.get("ts"), ps.get("reason") or "no reason recorded"))
+    print(backchannel_status_line())
     print("jobs by state: %s" % (", ".join(
         "%s=%d" % (k, by_state[k]) for k in sorted(by_state)) or "none"))
     queued = [j for j in jobs if j.get("run_status") == "queued"

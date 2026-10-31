@@ -216,6 +216,15 @@ def cmd_heartbeat(api, args):
     print("BC_HEARTBEAT ts=%s host=%s user=%s last_executed=%s stopped=%s" % (
         hb.get("ts"), hb.get("host"), hb.get("user"),
         hb.get("last_executed_id"), hb.get("stopped")))
+    st = hb.get("self_test")
+    if isinstance(st, dict):
+        checks = st.get("checks") or {}
+        print("BC_SELFTEST ok=%s ts=%s checks=%s" % (
+            st.get("ok"), st.get("ts"),
+            ",".join("%s=%d" % (k, 1 if v else 0)
+                     for k, v in sorted(checks.items()))))
+    else:
+        print("BC_SELFTEST ABSENT (agent predates the self-test, spec 010 T010)")
     if age is None:
         print("BC_HEARTBEAT_AGE UNKNOWN (unparseable ts)")
         return 2

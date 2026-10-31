@@ -163,3 +163,9 @@ Note: for the service to run while no WSL session is open, the
 owner's WSL user lingering must be enabled
 (`loginctl enable-linger tpierson`) — an owner-session act,
 checked at install time by the Desktop Access chat.
+
+## Recovery
+
+Failure triage and the four pre-written recovery cases (tray
+restart, tray.log read, runner-lane restart, network
+diagnostics) live in [RUNBOOK.md](RUNBOOK.md).
