@@ -27,6 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gatekeeper/config.py` loader/validator with the
   `test_config.py` golden battery (25 checks, all passing);
   additive — the gatekeeper does not read config yet.
+- Spec 010 Phase 7 (FR-012) SHIPPED 2026-10-31:
+  `AXIOVEX/gh-syncyard` v0.1.0 — the GitHub CLI extension.
+  Thin Go dispatcher over the installed gatekeeper
+  (lookup: $SYNCYARD_GK / $SYNCYARD_HOME / ~/syncyard /
+  ~/.syncyard / beside the binary / ./gatekeeper);
+  precompiled binaries via the official precompile action;
+  install proof: `gh extension install AXIOVEX/gh-syncyard`
+  then `gh syncyard status` against the live fleet.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel

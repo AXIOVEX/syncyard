@@ -59,14 +59,14 @@ reconciliation around the cutover).
       adoption shape). NOT sent; owner's word required.
 
 ## Phase 7 — gh CLI extension (FR-012, Amendment 1)
-- [ ] T022 Create `AXIOVEX/gh-syncyard` (public, Apache-2.0,
+- [x] T022 Create `AXIOVEX/gh-syncyard` (public, Apache-2.0,
       topic `gh-extension`); scaffold with
       `gh extension create --precompiled=go`.
-- [ ] T023 Thin dispatcher: locate the installed gatekeeper
+- [x] T023 Thin dispatcher: locate the installed gatekeeper
       (or walk the user through installing it) and forward
       submit/status/cancel/pause/resume/outbox with output
       and exit codes streamed.
-- [ ] T024 Release wiring: `gh-extension-precompile` action;
+- [x] T024 Release wiring: `gh-extension-precompile` action;
       binaries for windows/linux/darwin × amd64/arm64 named
       per GitHub's convention; install proof
       (`gh extension install AXIOVEX/gh-syncyard`, then
@@ -80,3 +80,24 @@ reconciliation around the cutover).
       defaults equivalence, merge, six fail-closed rejections).
       All passing 2026-10-30. gk.py does not read config yet;
       wiring is the next slice.
+
+## Phase 7 progress
+- [x] T022–T024 (complete, 2026-10-31; pulled forward ahead of
+      Phases 2–5 on the owner's order): `AXIOVEX/gh-syncyard`
+      is live (public, Apache-2.0, topics `gh-extension`,
+      `syncyard`, `github-cli`). The dispatcher (Go, stdlib
+      only) resolves the gatekeeper via $SYNCYARD_GK,
+      $SYNCYARD_HOME, ~/syncyard, ~/.syncyard, beside the
+      binary, or ./gatekeeper, resolves Python via
+      $SYNCYARD_PYTHON or PATH, and forwards every other
+      command with streams and exit code unchanged;
+      `version`/`doctor`/`help` are extension-native.
+      Release v0.1.0 built by `cli/gh-extension-precompile`
+      (run 41193373037, success; assets for darwin/linux/
+      windows/freebsd incl. the required six targets).
+      Install proof on this machine: `gh extension install
+      AXIOVEX/gh-syncyard` → `gh syncyard version` →
+      `gh syncyard doctor` (fleet gatekeeper resolved via
+      $SYNCYARD_HOME) → `gh syncyard status` printed the live
+      fleet status (491 completed jobs) through the real
+      gh CLI.

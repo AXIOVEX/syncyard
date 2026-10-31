@@ -382,7 +382,12 @@ Amendment 1 (2026-10-30): **FR-012** — Syncyard also ships as
 a GitHub CLI extension from `AXIOVEX/gh-syncyard` (`gh syncyard
 ...`); a thin Go dispatcher over the Python gatekeeper,
 cross-compiled release binaries via GitHub's official
-precompile action. **FR-006 editions are ranked by agent
+precompile action. **SHIPPED 2026-10-31: v0.1.0 released
+and install-proven** (`gh extension install
+AXIOVEX/gh-syncyard`; `gh syncyard status` served the live
+fleet gatekeeper). Gatekeeper lookup: $SYNCYARD_GK,
+$SYNCYARD_HOME, ~/syncyard, ~/.syncyard, beside the binary,
+./gatekeeper. **FR-006 editions are ranked by agent
 market share:** Meta Muse primary, then Claude Code, GitHub
 Copilot, OpenAI Codex/ChatGPT, Cursor, Gemini/Antigravity,
 generic + CLI-only. Phase 1 slice 1 has landed additively:
