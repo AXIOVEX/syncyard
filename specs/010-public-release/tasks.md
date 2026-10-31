@@ -23,7 +23,7 @@ reconciliation around the cutover).
       reconciliation (open-set equality), report.
 
 ## Phase 2 — Host matrix (FR-003, FR-004)
-- [ ] T006 Host type model in config + gatekeeper routing by
+- [x] T006 Host type model in config + gatekeeper routing by
       host; identity-marker contract per type.
 - [ ] T007 Windows + WSL2 transports generalized from
       run.yml / wsl.yml / grab.yml (no behavior change for the
@@ -125,3 +125,22 @@ reconciliation around the cutover).
       exact (534 = 534, open-set equality); first sweep on
       the wired code ran clean and dispatched (budget 4,880).
       Spec 010 Phase 1 (FR-001/FR-002/FR-007) is COMPLETE.
+
+## Phase 2 progress
+- [x] T006 (2026-10-31): hosts in config now declare the
+      transport workflows they serve (execute/grab kinds) and
+      their identity markers; an IDENTITY_BY_TYPE contract
+      gives every host type its default marker set. Validation
+      fails closed on: undeclared workflow served, bad kind,
+      a wsl2 workflow its via host does not serve with the
+      same kind, a declared workflow served by no host, an
+      empty identity list. The gatekeeper routes by host:
+      submit/adopt refuse a (lane, workflow) pair the lane's
+      host does not serve in the needed kind — no silent
+      venue fallback (FR-004). Golden battery: routing anchors
+      + an 8-pair routing matrix spanning the fleet hosts and
+      a macos host added by config alone, all pinned. Fleet
+      behavior unchanged (every fleet lane sits on the
+      windows host, which serves all three transports).
+      Fleet cutover of the routing build follows the Phase 1
+      shape (snapshot, deploy, reconcile) as an operator step.

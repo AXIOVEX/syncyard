@@ -60,6 +60,17 @@ LEGACY = {
     "LANE_LABEL": {"quick": "lane-quick", "normal": "lane-normal",
                    "long": "lane-long", "gpu": "lane-gpu"},
     "LANE_CONCURRENCY": {"quick": 1, "normal": 1, "long": 1, "gpu": 1},
+    "LANE_HOST": {"quick": "desktop", "normal": "desktop",
+                  "long": "desktop", "gpu": "desktop"},
+    "HOST_TYPE": {"desktop": "windows", "desktop-wsl": "wsl2"},
+    "HOST_VIA": {"desktop": None, "desktop-wsl": "desktop"},
+    "HOST_WORKFLOWS": {
+        "desktop": {"run.yml": "execute", "wsl.yml": "execute",
+                    "grab.yml": "grab"},
+        "desktop-wsl": {"wsl.yml": "execute", "grab.yml": "grab"}},
+    "HOST_IDENTITY": {
+        "desktop": ["LID_HOST", "LID_WINUSER", "LID_OS"],
+        "desktop-wsl": ["LID_HOST", "LID_WSLUSER", "LID_OS"]},
 }
 
 
@@ -141,6 +152,8 @@ for k, want in LEGACY.items():
     if isinstance(want, dict):
         got = {kk: (tuple(vv) if isinstance(vv, list) else vv)
                for kk, vv in got.items()}
+        want = {kk: (tuple(vv) if isinstance(vv, list) else vv)
+                for kk, vv in want.items()}
     check(f"anchor {k}", got == want, f"got {got!r} want {want!r}")
 
 # 2+3: dispatch equivalence + expected decisions
@@ -163,6 +176,79 @@ for lanes_live in (True, False):
     check(f"{tag}: decisions match pinned semantics",
           a["decided"] == exp["decided"] and a["events"] == exp["events"],
           f"got {a['decided']}/{a['events']} want {exp}")
+
+# 4: routing (FR-003/FR-004) — lane's host serves the workflow or
+# the pair is refused; a new host type routes only its own.
+MAC_YAML = """workflows:
+  - run.yml
+  - wsl.yml
+  - grab.yml
+  - mac.yml
+hosts:
+  macmini:
+    type: macos
+    workflows:
+      mac.yml: execute
+      grab.yml: grab
+    identity: [LID_HOST, LID_USER, LID_OS]
+    cwd:
+      mac.yml: /Users/test
+lanes:
+  maclane:
+    host: macmini
+    runner_label: lane-maclane
+    queued: [10, 30]
+    executing:
+      mode: fixed
+      values: [5, 15]
+"""
+
+ROUTE_DRIVER = r"""
+import importlib.util, json, os
+spec = importlib.util.spec_from_file_location("gk_under_test",
+                                              os.path.join(BASE_DIR, "gk.py"))
+gk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gk)
+pairs = [("quick", "run.yml"), ("gpu", "wsl.yml"), ("quick", "grab.yml"),
+         ("maclane", "mac.yml"), ("maclane", "grab.yml"),
+         ("maclane", "run.yml"), ("maclane", "wsl.yml"), ("quick", "mac.yml")]
+out = []
+for lane, wf in pairs:
+    r = gk.route_check(lane, wf)
+    out.append([lane, wf, list(r) if r else None,
+                gk.route_refusal(lane, wf) is not None])
+print(json.dumps(out))
+"""
+
+EXPECTED_ROUTES = [
+    ["quick", "run.yml", ["desktop", "execute"], False],
+    ["gpu", "wsl.yml", ["desktop", "execute"], False],
+    ["quick", "grab.yml", ["desktop", "grab"], False],
+    ["maclane", "mac.yml", ["macmini", "execute"], False],
+    ["maclane", "grab.yml", ["macmini", "grab"], False],
+    ["maclane", "run.yml", None, True],
+    ["maclane", "wsl.yml", None, True],
+    ["quick", "mac.yml", None, True],
+]
+
+d = tempfile.mkdtemp(prefix="gk-routes-")
+try:
+    shutil.copy(os.path.join(HERE, "gk.py"), d)
+    shutil.copy(os.path.join(HERE, "config.py"), d)
+    with open(os.path.join(d, "syncyard.yaml"), "w") as f:
+        f.write(MAC_YAML)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SYNCYARD_CONFIG", "SYNCARD_CONFIG")}
+    driver = "BASE_DIR = %r\n%s" % (d, ROUTE_DRIVER)
+    r = subprocess.run([sys.executable, "-c", driver],
+                       capture_output=True, text=True, env=env, cwd=d)
+    if r.returncode != 0:
+        raise RuntimeError("route driver failed: " + r.stderr[-800:])
+    got = json.loads(r.stdout.strip().splitlines()[-1])
+    check("routing matrix (fleet + macos host)", got == EXPECTED_ROUTES,
+          f"got {got}")
+finally:
+    shutil.rmtree(d, ignore_errors=True)
 
 print()
 if fails:

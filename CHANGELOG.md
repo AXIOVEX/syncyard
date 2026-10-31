@@ -50,6 +50,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   code deployed behind a queue snapshot (534 records,
   open-set 5) with exact reconciliation, and the fleet
   `syncyard.yaml` in place beside the gatekeeper.
+- Spec 010 Phase 2 begins (T006, 2026-10-31): hosts declare
+  the transport workflows they serve (execute/grab) and
+  their identity markers (a per-type contract); the
+  gatekeeper routes by host and refuses, at submit/adopt,
+  any job addressed to a venue that does not serve its
+  workflow — no silent fallback. Config validation covers
+  the new shape; the golden battery pins the routing
+  matrix across the fleet hosts plus a config-only macOS
+  host.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel

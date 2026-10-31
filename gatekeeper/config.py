@@ -58,12 +58,17 @@ DEFAULTS = {
     "hosts": {
         "desktop": {
             "type": "windows",
+            "workflows": {"run.yml": "execute", "wsl.yml": "execute",
+                          "grab.yml": "grab"},
+            "identity": ["LID_HOST", "LID_WINUSER", "LID_OS"],
             "cwd": {"run.yml": r"C:\Users\trist", "grab.yml": None},
         },
         "desktop-wsl": {
             "type": "wsl2",
             "via": "desktop",
             "distro": "Ubuntu-24.04",
+            "workflows": {"wsl.yml": "execute", "grab.yml": "grab"},
+            "identity": ["LID_HOST", "LID_WSLUSER", "LID_OS"],
             "cwd": {"wsl.yml": "/home/tpierson"},
         },
     },
@@ -87,6 +92,19 @@ DEFAULTS = {
 }
 
 HOST_TYPES = ("windows", "wsl2", "macos", "linux", "docker")
+
+# The identity-marker contract per host type (FR-003): the markers a
+# venue of this type proves itself with. A host may name its own
+# `identity` list; it must be non-empty.
+IDENTITY_BY_TYPE = {
+    "windows": ["LID_HOST", "LID_WINUSER", "LID_OS"],
+    "wsl2": ["LID_HOST", "LID_WSLUSER", "LID_OS"],
+    "macos": ["LID_HOST", "LID_USER", "LID_OS"],
+    "linux": ["LID_HOST", "LID_USER", "LID_OS"],
+    "docker": ["LID_HOST", "LID_IMAGE", "LID_OS"],
+}
+
+WORKFLOW_KINDS = ("execute", "grab")
 
 
 # --- Restricted YAML-subset parser --------------------------------
@@ -269,11 +287,37 @@ def validate(cfg):
     if (cfg.get("transport") or {}).get("max_script_bytes", 0) <= 0:
         raise ConfigError("transport.max_script_bytes must be positive")
     hosts = cfg.get("hosts") or {}
+    declared = cfg.get("workflows") or []
+    served = set()
     for name, host in hosts.items():
         if not isinstance(host, dict) or host.get("type") not in HOST_TYPES:
             raise ConfigError(f"hosts.{name}: type must be one of {HOST_TYPES}")
         if host.get("type") == "wsl2" and host.get("via") not in hosts:
             raise ConfigError(f"hosts.{name}: wsl2 host needs a `via` naming another host")
+        wf = host.get("workflows") or {}
+        if not isinstance(wf, dict) or not wf:
+            raise ConfigError(f"hosts.{name}: workflows must name at least one served workflow")
+        for wname, kind in wf.items():
+            if wname not in declared:
+                raise ConfigError(f"hosts.{name}: workflow {wname!r} is not in the top-level workflows list")
+            if kind not in WORKFLOW_KINDS:
+                raise ConfigError(f"hosts.{name}: workflow {wname!r} kind must be execute|grab")
+            served.add(wname)
+        ident = host.get("identity")
+        if ident is not None:
+            if (not isinstance(ident, list) or not ident
+                    or not all(isinstance(m, str) and m for m in ident)):
+                raise ConfigError(f"hosts.{name}: identity must be a non-empty list of marker names")
+        if host.get("type") == "wsl2":
+            via_wf = (hosts.get(host.get("via")) or {}).get("workflows") or {}
+            for wname, kind in wf.items():
+                if via_wf.get(wname) != kind:
+                    raise ConfigError(
+                        f"hosts.{name}: workflow {wname!r} rides via host "
+                        f"{host.get('via')!r}, which must serve it with the same kind")
+    for wname in declared:
+        if wname not in served:
+            raise ConfigError(f"workflows: {wname!r} is served by no host")
     lanes = cfg.get("lanes") or {}
     if not lanes:
         raise ConfigError("at least one lane is required")

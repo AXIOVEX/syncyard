@@ -116,6 +116,28 @@ for _h in _CFG["hosts"].values():
     DEFAULT_CWD.update(_h.get("cwd") or {})
 MARKER_RE = re.compile(_CFG["markers"]["pattern"])
 
+# Host routing (spec 010 FR-003/FR-004): a job names a lane; the
+# lane's host is the venue. A workflow the host does not serve is
+# refused at submit/adopt — never silently rerouted to another
+# venue.
+LANE_HOST = {n: l["host"] for n, l in _CFG["lanes"].items()}
+HOST_TYPE = {n: h["type"] for n, h in _CFG["hosts"].items()}
+HOST_VIA = {n: h.get("via") for n, h in _CFG["hosts"].items()}
+HOST_WORKFLOWS = {n: dict(h.get("workflows") or {})
+                  for n, h in _CFG["hosts"].items()}
+HOST_IDENTITY = {n: list(h.get("identity")
+                         or _gk_config.IDENTITY_BY_TYPE[h["type"]])
+                 for n, h in _CFG["hosts"].items()}
+
+
+def route_check(lane, workflow):
+    """(host, kind) if the lane's host serves this workflow, else None."""
+    host = LANE_HOST.get(lane)
+    if host is None:
+        return None
+    kind = HOST_WORKFLOWS.get(host, {}).get(workflow)
+    return (host, kind) if kind else None
+
 
 # --- Small helpers ---------------------------------------------------------
 
@@ -688,12 +710,30 @@ def find_active(jobs, key=None, run_id=None):
     return None
 
 
+def route_refusal(lane, workflow):
+    """None if the (lane, workflow) pair routes; else a refusal line.
+    Script jobs need an execute workflow on the lane's host; grab
+    jobs need its grab workflow (FR-004: no silent venue fallback)."""
+    want = "grab" if workflow == "grab.yml" else "execute"
+    r = route_check(lane, workflow)
+    if r is None or r[1] != want:
+        host = LANE_HOST.get(lane, "?")
+        return ("REFUSED routing: lane '%s' (host '%s', type %s) does not "
+                "serve workflow '%s' as %s"
+                % (lane, host, HOST_TYPE.get(host, "?"), workflow, want))
+    return None
+
+
 def cmd_submit(args):
     jobs = load_jobs()
     dup = find_active(jobs, key=args.key)
     if dup:
         print("REFUSED duplicate key '%s': active job %s (state=%s, run_id=%s)"
               % (args.key, dup["id"], dup["state"], dup.get("run_id")))
+        return 3
+    refusal = route_refusal(args.lane, args.workflow)
+    if refusal:
+        print(refusal)
         return 3
     job = {
         "id": new_job_id(args.key),
@@ -761,6 +801,10 @@ def cmd_adopt(args):
     if dup:
         print("REFUSED: run %s already tracked by job %s" % (args.run_id,
                                                              dup["id"]))
+        return 3
+    refusal = route_refusal(args.lane, args.workflow)
+    if refusal:
+        print(refusal)
         return 3
     job = {
         "id": new_job_id(args.key),
