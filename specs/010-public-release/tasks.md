@@ -19,7 +19,7 @@ reconciliation around the cutover).
 - [x] T004 Golden tests: fixture queue driven under the fleet
       config produces byte-identical dispatch decisions to the
       pre-config code path.
-- [ ] T005 Fleet cutover to config: queue snapshot, switch,
+- [x] T005 Fleet cutover to config: queue snapshot, switch,
       reconciliation (open-set equality), report.
 
 ## Phase 2 — Host matrix (FR-003, FR-004)
@@ -114,6 +114,14 @@ reconciliation around the cutover).
       dispatch equivalence (defaults vs fleet example yaml,
       byte-identical decisions in lanes-live and pre-lane-cap
       scenarios, also pinned against hand-computed semantics).
-      All batteries pass; test_golden wired into CI. T005
-      fleet cutover follows behind its queue snapshot +
-      reconciliation.
+      All batteries pass; test_golden wired into CI.
+- [x] T005 (fleet cutover, 2026-10-31): pre-switch queue
+      snapshot 534 records (aggregate sha256
+      780935b8257d29ad08c2c257ec079e79456b4dd719271362d2335c5
+      7296c4411, open set 5). Wired gk.py + config.py deployed
+      by atomic rename (fleet hashes match the repo copies);
+      `gk status` identical on the defaults path and again
+      with the fleet `syncyard.yaml` in place; reconciliation
+      exact (534 = 534, open-set equality); first sweep on
+      the wired code ran clean and dispatched (budget 4,880).
+      Spec 010 Phase 1 (FR-001/FR-002/FR-007) is COMPLETE.
