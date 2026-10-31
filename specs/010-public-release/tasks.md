@@ -60,7 +60,7 @@ reconciliation around the cutover).
 - [x] T020 CHANGELOG + VERSION 0.3.0 + release.
 
 ## Phase 6 — Named later (FR-011)
-- [ ] T021 `docs/github-pitch.md` prepared (gh-extension
+- [x] T021 `docs/github-pitch.md` prepared (gh-extension
       adoption shape). NOT sent; owner's word required.
 
 ## Phase 7 — gh CLI extension (FR-012, Amendment 1)
@@ -342,3 +342,12 @@ reconciliation around the cutover).
       Spec 010 is complete except Phase 6 (FR-011, the
       GitHub pitch brief — prepared only, sent solely on the
       owner's explicit word).
+- **Phase 6 complete as preparation** (2026-10-31, T021):
+      `docs/github-pitch.md` is written — the problem as
+      GitHub would see it, the gh-extension-first adoption
+      shape pointing at the working gh-syncyard v0.1.0, the
+      constraints already satisfied (each CI-enforced), what
+      would need to change, and a one-paragraph first-contact
+      version. It has NOT been sent; FR-011's gate stands.
+      With this, every task in spec 010 is complete; the
+      spec's only remaining act is the owner's send decision.

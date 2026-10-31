@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+- Spec 010 Phase 6 (T021, 2026-10-31): `docs/github-pitch.md`
+  — the GitHub adoption pitch brief (gh-extension-first
+  shape). Prepared only; not sent — the owner's explicit
+  word is required before it leaves the repo.
 
 ## [0.3.0] - 2026-10-31
 ### Added
