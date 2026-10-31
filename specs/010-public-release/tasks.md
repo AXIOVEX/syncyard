@@ -209,3 +209,13 @@ reconciliation around the cutover).
       absent) — diagnosis + agent update ride the fleet
       deploy of this phase. Spec 010 Phase 3 (FR-005) is
       COMPLETE in the repo.
+- [x] Field follow-up (2026-10-31): the stalled agent
+      recovered on its own after ~13 minutes — consistent
+      with an unbounded `git pull` hanging on a network
+      stall (the loop's only unbounded wait). agent.sh now
+      bounds every network git operation with
+      SYNCBC_GIT_TIMEOUT_S (default 120 s; clone 2x), so a
+      stalled sync fails one cycle instead of freezing the
+      heartbeat. The chaos battery's fixed-sleep phases were
+      hardened to polled waits after one flaky run; two
+      consecutive full passes followed.

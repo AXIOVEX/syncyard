@@ -203,22 +203,23 @@ def main():
         # 4: corrupt cmd.json
         hb_ts_before = (rig.read_chan_json("heartbeat.json") or {}).get("ts")
         rig.push({CHANNEL + "/cmd.json": "this is not json{{{\n"})
-        time.sleep(4)
         check("corrupt: agent process alive", rig.proc.poll() is None)
-        hb2 = rig.read_chan_json("heartbeat.json") or {}
-        check("corrupt: heartbeat keeps moving", hb2.get("ts") != hb_ts_before,
-              f"ts {hb_ts_before} -> {hb2.get('ts')}")
+        moved = wait_for(lambda: (rig.read_chan_json("heartbeat.json") or {}).get("ts")
+                         not in (None, hb_ts_before), 25, "heartbeat advance")
+        check("corrupt: heartbeat keeps moving", bool(moved),
+              f"ts stuck at {hb_ts_before}")
         out = rig.read_chan_json("out.json") or {}
         check("corrupt: nothing new executed", out.get("id") == "chaos-1")
 
         # 5: STOP halts execution, heartbeat reports stopped
         rig.push({CHANNEL + "/STOP": "chaos test\n"})
         rig.push_cmd("chaos-2", "echo CHAOS_STOPPED")
-        time.sleep(5)
+        stopped = wait_for(lambda: (rig.read_chan_json("heartbeat.json") or {}).get("stopped") is True,
+                           25, "stopped heartbeat")
+        check("STOP: heartbeat reports stopped=true", bool(stopped))
+        time.sleep(3)
         out = rig.read_chan_json("out.json") or {}
         check("STOP: queued command not executed", out.get("id") != "chaos-2")
-        hb3 = rig.read_chan_json("heartbeat.json") or {}
-        check("STOP: heartbeat reports stopped=true", hb3.get("stopped") is True)
 
         # 6: STOP removed: execution resumes
         rig.push({CHANNEL + "/STOP": None})
