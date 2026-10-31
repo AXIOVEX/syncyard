@@ -71,6 +71,51 @@ RUN_HOLDING_STATES = ("dispatching", "dispatched", "watching")
 
 MARKER_RE = re.compile(r"^[A-Z][A-Z0-9_]{2,}([ :]|$)")
 
+# --- Effective configuration (spec 010 FR-001/FR-002/FR-007) ---------------
+# The literals above are the pre-config constants. config.py's built-in
+# defaults ARE those constants verbatim, so loading the effective config
+# (syncyard.yaml beside this file, or $SYNCYARD_CONFIG / $SYNCARD_CONFIG,
+# deep-merged over the defaults) and rebinding every name below changes
+# nothing when no config file exists — golden-proven by test_golden.py.
+# A config that fails validation exits loudly here (fail closed), never
+# a silent fall-back to defaults.
+import importlib.util as _ilu
+
+_cfg_spec = _ilu.spec_from_file_location(
+    "syncyard_config", os.path.join(BASE, "config.py"))
+_cfg_mod = _ilu.module_from_spec(_cfg_spec)
+_cfg_spec.loader.exec_module(_cfg_mod)
+try:
+    _CFG = _cfg_mod.load_config(os.environ.get("SYNCYARD_CONFIG") or None)
+except _cfg_mod.ConfigError as _e:
+    print("CONFIG_ERROR %s" % _e, file=sys.stderr)
+    raise SystemExit(2)
+
+REPO = _CFG["door_repo"]
+PROJECT_REPO = _CFG["project_repo"]
+HLOG_MAX_BYTES = _CFG["retention"]["human_log_max_bytes"]
+MAX_ACTIVE_DISPATCHED = _CFG["dispatch"]["max_active_dispatched"]
+STANDDOWN_REMAINING = _CFG["budget"]["standdown_remaining"]
+CRITICAL_REMAINING = _CFG["budget"]["critical_remaining"]
+STALE_DISPATCHING_MIN = _CFG["dispatch"]["stale_dispatching_min"]
+LOCK_STALE_MIN = _CFG["dispatch"]["lock_stale_min"]
+WORKFLOWS = tuple(_CFG["workflows"])
+LANES = tuple(_CFG["lanes"].keys())
+LANE_LABEL = {n: l["runner_label"] for n, l in _CFG["lanes"].items()}
+LANE_CONCURRENCY = {n: int(l.get("concurrency", 1))
+                    for n, l in _CFG["lanes"].items()}
+QUEUED_WM = {n: tuple(l["queued"]) for n, l in _CFG["lanes"].items()}
+EXEC_WM_FIXED = {n: tuple(l["executing"]["values"])
+                 for n, l in _CFG["lanes"].items()
+                 if l["executing"]["mode"] == "fixed"}
+EXEC_WM_FLOOR = {n: tuple(l["executing"]["floor"])
+                 for n, l in _CFG["lanes"].items()
+                 if l["executing"]["mode"] == "expectation"}
+DEFAULT_CWD = {}
+for _h in _CFG["hosts"].values():
+    DEFAULT_CWD.update(_h.get("cwd") or {})
+MARKER_RE = re.compile(_CFG["markers"]["pattern"])
+
 
 # --- Small helpers ---------------------------------------------------------
 
@@ -813,7 +858,7 @@ def dispatch_one(job, jobs):
     ledger("dispatching", job_id=job["id"], key=job["key"],
            workflow=job["workflow"], lane=job["lane"])
     before = now_iso()
-    lane_label = "lane-" + job["lane"]
+    lane_label = LANE_LABEL[job["lane"]]
     if job["workflow"] == "grab.yml":
         gh_args = ["workflow", "run", "grab.yml", "-R", REPO,
                    "-f", "path=" + job["grab_path"],
@@ -883,7 +928,9 @@ def dispatch_pass(jobs, runs_by_id):
                if j["state"] in RUN_HOLDING_STATES
                and j.get("run_status") != "completed"]
     active_count = len(holding)
-    held_lanes = {j["lane"] for j in holding}
+    held_lane_counts = {}
+    for j in holding:
+        held_lane_counts[j["lane"]] = held_lane_counts.get(j["lane"], 0) + 1
     held_hashes = {(j["workflow"], j.get("script_sha256")) for j in holding
                    if j.get("script_sha256")}
     waiting = sorted([j for j in jobs if j["state"] == "submitted"],
@@ -899,7 +946,8 @@ def dispatch_pass(jobs, runs_by_id):
             ledger("dispatch_deferred_cap", job_id=job["id"], key=job["key"],
                    active=active_count, cap=MAX_ACTIVE_DISPATCHED)
             continue
-        if job["lane"] in held_lanes and not maint:
+        if held_lane_counts.get(job["lane"], 0) \
+                >= LANE_CONCURRENCY.get(job["lane"], 1) and not maint:
             continue  # lane serialization: another job of this class is live
         if (job["workflow"], job.get("script_sha256")) in held_hashes:
             ledger("dispatch_skipped_duplicate", job_id=job["id"],
@@ -909,7 +957,8 @@ def dispatch_pass(jobs, runs_by_id):
         if dispatch_one(job, jobs):
             dispatched += 1
             active_count += 1
-            held_lanes.add(job["lane"])
+            held_lane_counts[job["lane"]] = \
+                held_lane_counts.get(job["lane"], 0) + 1
             if job.get("script_sha256"):
                 held_hashes.add((job["workflow"], job["script_sha256"]))
     return dispatched

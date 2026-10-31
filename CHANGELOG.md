@@ -35,6 +35,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   precompiled binaries via the official precompile action;
   install proof: `gh extension install AXIOVEX/gh-syncyard`
   then `gh syncyard status` against the live fleet.
+- Spec 010 Phase 1 slice 2 (T003/T004, 2026-10-31): the
+  gatekeeper now reads its effective configuration at
+  startup — lane set, runner labels, per-lane concurrency,
+  watermark tables, budgets, and dispatch knobs all bind
+  from `syncyard.yaml` deep-merged over the built-in
+  defaults (the pre-config constants verbatim); invalid
+  config fails closed with a named error.
+  `gatekeeper/test_golden.py` proves byte-identical
+  dispatch decisions under defaults vs the fleet config,
+  and runs in CI.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel
