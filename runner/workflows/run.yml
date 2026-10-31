@@ -1,15 +1,26 @@
-# Syncyard run workflow - version 0.1.1
+# Syncyard run workflow - version 0.2.0
 # Part of AXIOVEX/syncyard. Dispatch-only by design: this workflow binds
 # self-hosted runners and must NEVER be triggered by pull_request,
 # pull_request_target, issues, or any other unprivileged event.
 # See SECURITY.md - the security model depends on it.
+#
+# Host contract (spec 010 FR-003): the `lane` input addresses the
+# runner; any Windows host whose runner carries that lane label can
+# serve this transport. The gatekeeper always passes cwd explicitly
+# (from the host's config cwd map); the default below is only a
+# fallback for manual dispatch. Job scripts prove the venue with
+# the host's identity markers (config: hosts.<name>.identity).
 name: run
 
 on:
   workflow_dispatch:
     inputs:
+      lane:
+        description: "Runner lane label (from the gatekeeper's config)"
+        required: false
+        default: 'lane-long'
       cmd_b64:
-        description: "Base64-encoded PowerShell script to execute on TRISTEN-DESKTOP"
+        description: "Base64-encoded PowerShell script to execute on the addressed Windows host"
         required: true
       cwd:
         description: "Working directory"
@@ -18,7 +29,7 @@ on:
 
 jobs:
   run:
-    runs-on: [self-hosted, Windows, X64, desktop, gpu]
+    runs-on: [self-hosted, "${{ inputs.lane }}"]
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4

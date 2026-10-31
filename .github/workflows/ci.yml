@@ -28,6 +28,9 @@ jobs:
           python3 gatekeeper/test_fr013.py
           python3 gatekeeper/test_golden.py
 
+      - name: Transport workflow contract battery
+        run: python3 runner/test_workflow_contract.py
+
       - name: Gatekeeper offline smoke test
         run: |
           set -e

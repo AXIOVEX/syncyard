@@ -1,20 +1,29 @@
-# Syncyard grab workflow - version 0.1.1
+# Syncyard grab workflow - version 0.2.0
 # Part of AXIOVEX/syncyard. Dispatch-only by design: this workflow binds
 # self-hosted runners and must NEVER be triggered by pull_request,
 # pull_request_target, issues, or any other unprivileged event.
 # See SECURITY.md - the security model depends on it.
+#
+# The file-return transport for every host type (spec 010 FR-003):
+# runs on the runner addressed by the `lane` input and returns the
+# addressed host's file as an artifact. For a WSL2 venue the path
+# is the file's UNC path through the Windows host.
 name: grab
 
 on:
   workflow_dispatch:
     inputs:
+      lane:
+        description: "Runner lane label (from the gatekeeper's config)"
+        required: false
+        default: 'lane-long'
       path:
-        description: "File path on the desktop to return as an artifact"
+        description: "File path on the addressed host to return as an artifact"
         required: true
 
 jobs:
   grab:
-    runs-on: [self-hosted, Windows, X64, desktop, gpu]
+    runs-on: [self-hosted, "${{ inputs.lane }}"]
     timeout-minutes: 10
     steps:
       - name: Upload

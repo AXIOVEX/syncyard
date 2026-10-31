@@ -25,7 +25,7 @@ reconciliation around the cutover).
 ## Phase 2 — Host matrix (FR-003, FR-004)
 - [x] T006 Host type model in config + gatekeeper routing by
       host; identity-marker contract per type.
-- [ ] T007 Windows + WSL2 transports generalized from
+- [x] T007 Windows + WSL2 transports generalized from
       run.yml / wsl.yml / grab.yml (no behavior change for the
       production fleet; proven by the Phase 1 golden tests).
 - [ ] T008 Linux + macOS transports (execute + grab) with
@@ -150,3 +150,15 @@ reconciliation around the cutover).
       refusal proven in-process, reconciliation exact
       (534 = 534), first sweep on the routing build clean
       (dispatched 1, budget 4,985).
+- [x] T007 (2026-10-31): the repo's transport workflows
+      (runner/workflows run/wsl/grab, v0.2.0) are generalized
+      to the shape the production door already runs: a `lane`
+      input addresses the runner (`runs-on: [self-hosted,
+      "${{ inputs.lane }}"]`), no hardcoded label lists, and
+      host-agnostic prose stating the FR-003 host contract.
+      Execution bodies are byte-for-byte the proven ones. A
+      new contract battery (runner/test_workflow_contract.py,
+      18 checks, wired into CI) pins dispatch-only triggers,
+      lane binding, and transport inputs for every workflow.
+      The live door workflows are untouched — the spec 005
+      move repoints the fleet to these copies when it lands.
