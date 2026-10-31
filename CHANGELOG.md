@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 010 Phase 5 docs (T017 + T018, 2026-10-31):
+  `SECURITY.md` is now the shipped security posture — the
+  FR-009 invariant verbatim (the same sentence every skill
+  edition carries), the posture in plain language (CI on
+  GitHub-hosted runners only; self-hosted runners reachable
+  solely behind the gatekeeper's `workflow_dispatch`; the
+  gatekeeper's verified-write and exactly-once dispatch
+  rules; the backchannel as dev/recovery only, carrying no
+  job traffic), and adopter checklists for token scoping and
+  runner isolation — alongside the existing reporting policy.
+  `README.md` opens with the two-minute story FR-010
+  requires (the problem, the scars that shaped the design,
+  what Syncyard deliberately does not do), the security
+  section links `SECURITY.md` above the quickstart, and
+  per-host quickstarts cover Windows, WSL2 (via a Windows
+  host), Linux, macOS, and Docker — including the fleet rule
+  that cross-job payloads are never staged in a WSL venue's
+  `/tmp` (it does not persist between jobs; stage in the WSL
+  home directory or the job's working tree instead).
 - Spec 011 — shutdown protection and recovery (owner
   direction, 2026-10-31): a host-side shutdown guard that
   delays a non-forced shutdown while active work drains
