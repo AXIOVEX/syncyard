@@ -164,7 +164,10 @@ class Rig:
 
     def cleanup(self):
         self.kill_agent()
-        shutil.rmtree(self.root, ignore_errors=True)
+        if os.environ.get("CHAOS_KEEP"):
+            print(f"rig preserved at {self.root}")
+        else:
+            shutil.rmtree(self.root, ignore_errors=True)
 
 
 def main():
@@ -230,18 +233,41 @@ def main():
               out is not None and "CHAOS_THREE" in (out.get("stdout_tail") or ""))
 
         # 7: kill -9 + restart: no replay, fresh ids execute
+        hb_ts_pre = (rig.read_chan_json("heartbeat.json") or {}).get("ts")
         rig.kill_agent(signal.SIGKILL)
         time.sleep(1)
         rig.start_agent()
-        hb4 = wait_for(lambda: (rig.read_chan_json("heartbeat.json") or {}).get("ts"),
-                       60, "post-restart heartbeat")
-        check("restart: heartbeat resumes", hb4 is not None)
+        # The pre-kill heartbeat file persists in the clone, so a bare
+        # ts read proves nothing (it returns the stale value instantly
+        # and races the restarted agent's first cycle - the PR #26 CI
+        # flake). Require the ts to ADVANCE past the pre-kill value,
+        # twice (two full post-restart cycles), before the replay probe.
+        def advanced_past(prev):
+            ts = (rig.read_chan_json("heartbeat.json") or {}).get("ts")
+            return ts if ts and prev and ts > prev else None
+        hb_first = wait_for(lambda: advanced_past(hb_ts_pre), 60,
+                            "post-restart heartbeat advance")
+        check("restart: heartbeat resumes", hb_first is not None)
+        hb_second = wait_for(lambda: advanced_past(hb_first), 60,
+                             "second post-restart heartbeat") if hb_first else None
+        check("restart: heartbeat advances twice", hb_second is not None)
         rig.push_cmd("chaos-3", "echo CHAOS_REPLAY")
-        time.sleep(5)
+        # Poll the whole window: any appearance of the replay body in
+        # out.json fails fast; a full quiet window is the pass.
+        replayed = None
+        deadline = time.time() + 12
+        while time.time() < deadline:
+            out = rig.read_chan_json("out.json") or {}
+            if "CHAOS_REPLAY" in (out.get("stdout_tail") or ""):
+                replayed = out
+                break
+            time.sleep(0.5)
         out = rig.read_chan_json("out.json") or {}
         check("restart: last executed id not replayed",
-              "CHAOS_THREE" in (out.get("stdout_tail") or "")
-              and "CHAOS_REPLAY" not in (out.get("stdout_tail") or ""))
+              replayed is None
+              and "CHAOS_THREE" in (out.get("stdout_tail") or ""))
+        check("restart: chaos-3 executed exactly once across restart",
+              rig.agent_log_text().count("executing id=chaos-3") == 1)
         rig.push_cmd("chaos-4", "echo CHAOS_FOUR")
         out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-4"
                        and rig.read_chan_json("out.json"), 45, "chaos-4 out")
