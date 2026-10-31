@@ -59,6 +59,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the new shape; the golden battery pins the routing
   matrix across the fleet hosts plus a config-only macOS
   host.
+- Spec 010 T007 (2026-10-31): the shipped transport
+  workflows are generalized — a `lane` input addresses the
+  runner, hardcoded label lists are gone, and each file
+  states its host contract; execution bodies unchanged
+  from the proven production shape. New contract battery
+  in CI pins dispatch-only triggers and lane binding.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel
