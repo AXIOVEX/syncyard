@@ -183,9 +183,9 @@ proves.
 - **FR-003 — The going-down record is written first.**
   *Behavior*: the instant the guard detects an impending
   shutdown or logoff — before any drain step — it writes a
-  going-down record with verified-write discipline (the
-  FR-012/FR-013 pattern: temp file, read-back verify, atomic
-  rename): host, timestamp, trigger (shutdown / logoff /
+  going-down record with verified-write discipline (spec
+  001's FR-012/FR-013 pattern: temp file, read-back verify,
+  atomic rename): host, timestamp, trigger (shutdown / logoff /
   update / unknown), the active gatekeeper run ids, and the
   supervised-work ids with their checkpoint pointers. The
   record is written host-side *and* pushed to the gatekeeper
