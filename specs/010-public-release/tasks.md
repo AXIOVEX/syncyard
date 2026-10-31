@@ -41,11 +41,16 @@ reconciliation around the cutover).
 - [x] T013 Recovery runbook shipped (spec 009 FR-007 cases).
 
 ## Phase 4 — Agent skills (FR-006)
-- [ ] T014 `skills/meta-muse/SKILL.md` — primary package.
-- [ ] T015 `skills/generic-agent/SKILL.md` +
-      `skills/cli-only/SKILL.md` from the same contract.
-- [ ] T016 Skill currency check in CI: skill version matches
-      VERSION; invariant text present verbatim.
+- [x] T014 `skills/meta-muse/SKILL.md` — primary package.
+- [x] T015 `skills/generic-agent/SKILL.md` +
+      `skills/cli-only/SKILL.md` from the same contract — plus
+      the remaining Amendment 1 editions (claude-code,
+      github-copilot, openai-codex, cursor, google-gemini),
+      all generated from `skills/_source/contract.md` by
+      `skills/build_skills.py`.
+- [x] T016 Skill currency check in CI: skill version matches
+      VERSION; invariant text present verbatim
+      (`skills/test_skills.py`, wired into ci.yml).
 
 ## Phase 5 — Docs, tests, release (FR-008, FR-009, FR-010)
 - [ ] T017 SECURITY.md posture + adopter checklist; README
@@ -233,3 +238,21 @@ reconciliation around the cutover).
       was also hardened (it waited on a stale heartbeat ts and
       raced the restarted agent — the PR #26 CI flake); three
       consecutive local passes, 18 checks.
+
+## Phase 4 progress
+- [x] T014–T016 (2026-10-31): the skills pack ships eight
+      editions in the Amendment 1 ranking (meta-muse,
+      claude-code, github-copilot, openai-codex, cursor,
+      google-gemini, generic-agent, cli-only), each a
+      `skills/<slug>/SKILL.md` rendered by
+      `skills/build_skills.py` from the single shared source
+      `skills/_source/contract.md` — the fleet SKILL.md's
+      contract, adopter-facing (door rule, lanes, marker
+      verdicts, API discipline, FR-005 duty, backchannel
+      exclusivity, break-glass, and the FR-009 invariant as
+      one verbatim line). `skills/test_skills.py` (T016) is
+      wired into CI: edition order, per-edition version ==
+      VERSION, invariant verbatim, contract anchors, and a
+      generator drift check. `skills/README.md` indexes the
+      editions and the regenerate/check commands. Spec 010
+      Phase 4 (FR-006) is COMPLETE in the repo.

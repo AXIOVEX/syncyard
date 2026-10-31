@@ -39,6 +39,9 @@ jobs:
           (cd backchannel && python3 test_bc.py)
           python3 backchannel/test_chaos.py
 
+      - name: Skills currency battery (spec 010 T016)
+        run: python3 skills/test_skills.py
+
       - name: Gatekeeper offline smoke test
         run: |
           set -e

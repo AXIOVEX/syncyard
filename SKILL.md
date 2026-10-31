@@ -397,3 +397,14 @@ generic + CLI-only. Phase 1 slice 1 has landed additively:
 (stdlib loader, validation, golden-tested against the live
 constants by `gatekeeper/test_config.py`); `gk.py` does not
 read config yet.
+
+Phase 4 (FR-006) has landed: the adopter-facing skills pack
+lives under `skills/` — eight editions (Meta Muse primary,
+then Claude Code, GitHub Copilot, OpenAI Codex/ChatGPT,
+Cursor, Google Gemini/Antigravity, generic-agent, CLI-only)
+generated from the single shared source
+`skills/_source/contract.md` by `skills/build_skills.py`, with
+the T016 currency battery (`skills/test_skills.py`) in CI.
+This fleet SKILL.md remains the operator's own copy; adopter
+editions derive from the shared contract, and behavior changes
+update both in the same change.
