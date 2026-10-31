@@ -1,0 +1,39 @@
+# Transport smoke (spec 010 T008/T009): runs the shipped POSIX and
+# Docker transport script bodies on GitHub-hosted runners.
+#
+# This workflow uses GitHub-hosted runners EXCLUSIVELY. The
+# dispatch-only security invariant is untouched: the transport
+# workflows under runner/workflows/ still bind self-hosted
+# runners and still trigger on workflow_dispatch only — this
+# workflow merely exercises their script bodies on hosted
+# machines, the way the spec's hosted smoke batteries prescribe.
+name: transport-smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'runner/**'
+      - '.github/workflows/transport-smoke.yml'
+
+jobs:
+  posix:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Transport contract battery
+        run: python3 runner/test_workflow_contract.py
+      - name: POSIX transport smoke (this OS's body)
+        run: python3 runner/test_transport_smoke.py
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      SYNCYARD_SMOKE_DOCKER: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Docker transport smoke (image + mounts + result file)
+        run: python3 runner/test_transport_smoke.py

@@ -250,6 +250,79 @@ try:
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
+# 5: dispatch argv construction (docker image/mounts ride along;
+# plain and grab jobs gain nothing).
+DISPATCH_DRIVER = r"""
+import base64, importlib.util, json, os
+spec = importlib.util.spec_from_file_location("gk_under_test",
+                                              os.path.join(BASE_DIR, "gk.py"))
+gk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gk)
+calls = []
+gk.save_job_safe = lambda job, phase: True
+gk.ledger = lambda event, **kw: None
+def fake_run(cmd, timeout=60):
+    calls.append(cmd)
+    return 0, "https://github.com/x/y/actions/runs/424242", ""
+gk.run_cmd = fake_run
+script = os.path.join(BASE_DIR, "probe.sh")
+open(script, "w").write("echo hi\n")
+b64 = base64.b64encode(b"echo hi\n").decode()
+def job(**kw):
+    j = {"id": "j1", "key": "k", "program": "golden", "state": "submitted",
+         "flags": [], "run_id": None}
+    j.update(kw)
+    return j
+out = {}
+gk.dispatch_one(job(workflow="wsl.yml", lane="quick",
+                    script_path=script, cwd="/home/tpierson"), [])
+out["plain"] = calls[-1]
+gk.dispatch_one(job(workflow="docker.yml", lane="quick",
+                    script_path=script, cwd="/",
+                    image="debian:bookworm-slim", mounts="/a:/mnt/a"), [])
+out["docker"] = calls[-1]
+gk.dispatch_one(job(workflow="grab.yml", lane="quick",
+                    grab_path="/x/file.bin"), [])
+out["grab"] = calls[-1]
+print(json.dumps({"out": out, "b64": b64}))
+"""
+
+d = tempfile.mkdtemp(prefix="gk-dispatch-")
+try:
+    shutil.copy(os.path.join(HERE, "gk.py"), d)
+    shutil.copy(os.path.join(HERE, "config.py"), d)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SYNCYARD_CONFIG", "SYNCARD_CONFIG")}
+    driver = "BASE_DIR = %r\n%s" % (d, DISPATCH_DRIVER)
+    r = subprocess.run([sys.executable, "-c", driver],
+                       capture_output=True, text=True, env=env, cwd=d)
+    if r.returncode != 0:
+        raise RuntimeError("dispatch driver failed: " + r.stderr[-800:])
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    b64 = res["b64"]
+    base = ["gh", "workflow", "run"]
+    check("dispatch argv: plain job",
+          res["out"]["plain"] == base + ["wsl.yml", "-R", "tbitcs/desktop-runner",
+                                         "-f", "cmd_b64=" + b64,
+                                         "-f", "lane=lane-quick",
+                                         "-f", "cwd=/home/tpierson"],
+          str(res["out"]["plain"]))
+    check("dispatch argv: docker job carries image + mounts",
+          res["out"]["docker"] == base + ["docker.yml", "-R", "tbitcs/desktop-runner",
+                                          "-f", "cmd_b64=" + b64,
+                                          "-f", "lane=lane-quick",
+                                          "-f", "cwd=/",
+                                          "-f", "image=debian:bookworm-slim",
+                                          "-f", "mounts=/a:/mnt/a"],
+          str(res["out"]["docker"]))
+    check("dispatch argv: grab job",
+          res["out"]["grab"] == base + ["grab.yml", "-R", "tbitcs/desktop-runner",
+                                        "-f", "path=/x/file.bin",
+                                        "-f", "lane=lane-quick"],
+          str(res["out"]["grab"]))
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
 print()
 if fails:
     print(f"TEST_GOLDEN: FAIL ({len(fails)} failing)")

@@ -28,9 +28,9 @@ reconciliation around the cutover).
 - [x] T007 Windows + WSL2 transports generalized from
       run.yml / wsl.yml / grab.yml (no behavior change for the
       production fleet; proven by the Phase 1 golden tests).
-- [ ] T008 Linux + macOS transports (execute + grab) with
+- [x] T008 Linux + macOS transports (execute + grab) with
       hosted-runner CI smoke batteries.
-- [ ] T009 Docker venue transport (image from config/job,
+- [x] T009 Docker venue transport (image from config/job,
       declared mounts, result return via grab) + battery.
 
 ## Phase 3 — Backchannel hardening (FR-005)
@@ -162,3 +162,27 @@ reconciliation around the cutover).
       lane binding, and transport inputs for every workflow.
       The live door workflows are untouched — the spec 005
       move repoints the fleet to these copies when it lands.
+- [x] T008 + T009 (2026-10-31): POSIX and Docker transports
+      shipped. `runner/workflows/linux.yml` + `macos.yml`:
+      native bash execute transports with ONE shared script
+      body (base64 via openssl for GNU/BSD portability; cwd
+      honored; exit code propagates) — the contract battery
+      fails CI if the bodies drift; grab.yml already serves
+      every host type. `runner/workflows/docker.yml`: caller
+      image + comma-separated mounts + container cwd; the
+      script runs inside the image, and files written into a
+      declared mount land on the host for grab return.
+      Gatekeeper: `submit --image/--mounts` (image falls
+      back to the lane host's configured `image`), dispatch
+      passes both through — pinned by exact-argv golden
+      checks for plain, docker, and grab jobs. Batteries:
+      `runner/test_transport_smoke.py` executes the shipped
+      bodies (markers, cwd, exit 7; docker: image pull, in-
+      container run, mounted result file) and
+      `.github/workflows/transport-smoke.yml` runs it on
+      ubuntu + macos hosted runners and in a docker-required
+      job — GitHub-hosted only; the dispatch-only invariant
+      is untouched. The fleet gains no new hosts (defaults
+      unchanged); the example config carries commented Linux
+      and Docker adopter examples. Spec 010 Phase 2
+      (FR-003/FR-004) is COMPLETE.

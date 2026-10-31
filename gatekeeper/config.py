@@ -308,6 +308,9 @@ def validate(cfg):
             if (not isinstance(ident, list) or not ident
                     or not all(isinstance(m, str) and m for m in ident)):
                 raise ConfigError(f"hosts.{name}: identity must be a non-empty list of marker names")
+        image = host.get("image")
+        if image is not None and not (isinstance(image, str) and image):
+            raise ConfigError(f"hosts.{name}: image must be a non-empty string")
         if host.get("type") == "wsl2":
             via_wf = (hosts.get(host.get("via")) or {}).get("workflows") or {}
             for wname, kind in wf.items():

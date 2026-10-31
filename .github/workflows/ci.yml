@@ -31,6 +31,9 @@ jobs:
       - name: Transport workflow contract battery
         run: python3 runner/test_workflow_contract.py
 
+      - name: POSIX transport smoke battery
+        run: python3 runner/test_transport_smoke.py
+
       - name: Gatekeeper offline smoke test
         run: |
           set -e

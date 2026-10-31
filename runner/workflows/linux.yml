@@ -1,0 +1,44 @@
+# Syncyard linux workflow - version 0.2.0
+# Part of AXIOVEX/syncyard. Dispatch-only by design: this workflow binds
+# self-hosted runners and must NEVER be triggered by pull_request,
+# pull_request_target, issues, or any other unprivileged event.
+# See SECURITY.md - the security model depends on it.
+#
+# Host contract (spec 010 FR-003): the native Linux transport. The
+# `lane` input addresses the runner; any Linux host whose runner
+# carries that lane label can serve it. The gatekeeper passes cwd
+# explicitly (the host's config cwd map); empty means the runner
+# user's home. The script body below is identical to macos.yml —
+# the contract battery fails CI if the two drift.
+name: linux
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Runner lane label (from the gatekeeper's config)"
+        required: false
+        default: 'lane-long'
+      cmd_b64:
+        description: "Base64-encoded bash script to execute on the addressed Linux host"
+        required: true
+      cwd:
+        description: "Working directory (empty = runner user's home)"
+        required: false
+        default: ''
+
+jobs:
+  linux:
+    runs-on: [self-hosted, "${{ inputs.lane }}"]
+    timeout-minutes: 360
+    steps:
+      - name: Execute
+        shell: bash
+        env:
+          CMD_B64: ${{ inputs.cmd_b64 }}
+          JOB_CWD: ${{ inputs.cwd }}
+        run: |
+          f="$RUNNER_TEMP/job.sh"
+          printf '%s' "$CMD_B64" | openssl base64 -d -A > "$f"
+          cd "${JOB_CWD:-$HOME}"
+          bash "$f"

@@ -80,6 +80,42 @@ workflows:
   - wsl.yml
   - grab.yml
 
+# --- Adopter examples (not this fleet) -----------------------
+# A Linux host and lane (uncomment and adjust; also add
+# linux.yml to the workflows list above):
+# hosts:
+#   linuxbox:
+#     type: linux
+#     workflows:
+#       linux.yml: execute
+#       grab.yml: grab
+#     identity: [LID_HOST, LID_USER, LID_OS]
+#     cwd:
+#       linux.yml: /home/you
+# lanes:
+#   linuxlane:
+#     host: linuxbox
+#     runner_label: lane-linuxlane
+#     queued: [20, 45]
+#     executing:
+#       mode: fixed
+#       values: [45, 90]
+#
+# A Docker venue — a named image run on any runner carrying
+# its lane label (the image is the venue; jobs may name their
+# own with `submit --image`, falling back to the host's image
+# here; also add docker.yml above):
+# hosts:
+#   dock:
+#     type: docker
+#     image: debian:bookworm-slim
+#     workflows:
+#       docker.yml: execute
+#       grab.yml: grab
+#     identity: [LID_HOST, LID_IMAGE, LID_OS]
+#     cwd:
+#       docker.yml: /
+
 # Lanes (spec 010 FR-002). Count and names are configuration.
 # concurrency is 1 (serial) unless a lane says otherwise.
 # Watermarks are minutes: queued/executing (warn, escalate);

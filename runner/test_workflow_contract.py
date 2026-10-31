@@ -21,7 +21,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 WF_DIR = os.path.join(HERE, "workflows")
-EXECUTE = ("run.yml", "wsl.yml")
+EXECUTE = ("run.yml", "wsl.yml", "linux.yml", "macos.yml", "docker.yml")
 GRAB = ("grab.yml",)
 
 fails = []
@@ -63,6 +63,33 @@ for fname in EXECUTE + GRAB:
         check(f"{fname}: takes cmd_b64", "cmd_b64:" in text)
     else:
         check(f"{fname}: takes path", "\n      path:" in text)
+
+# The docker transport declares its venue inputs and runs docker.
+dtext = open(os.path.join(WF_DIR, "docker.yml")).read()
+check("docker.yml: takes image", "\n      image:" in dtext)
+check("docker.yml: takes mounts", "\n      mounts:" in dtext)
+check("docker.yml: runs the container", "docker run" in dtext)
+
+
+# The POSIX transports share one script body; drift fails here.
+def run_block(text):
+    lines = text.splitlines()
+    for i, ln in enumerate(lines):
+        if ln.strip() == "run: |":
+            indent = len(ln) - len(ln.lstrip())
+            body = []
+            for b in lines[i + 1:]:
+                if b.strip() and (len(b) - len(b.lstrip())) <= indent:
+                    break
+                body.append(b)
+            pad = min((len(b) - len(b.lstrip())) for b in body if b.strip())
+            return "\n".join(b[pad:] for b in body)
+    return ""
+
+
+check("linux.yml body == macos.yml body",
+      run_block(open(os.path.join(WF_DIR, "linux.yml")).read())
+      == run_block(open(os.path.join(WF_DIR, "macos.yml")).read()))
 
 print()
 if fails:

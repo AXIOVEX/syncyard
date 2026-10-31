@@ -128,6 +128,7 @@ HOST_WORKFLOWS = {n: dict(h.get("workflows") or {})
 HOST_IDENTITY = {n: list(h.get("identity")
                          or _gk_config.IDENTITY_BY_TYPE[h["type"]])
                  for n, h in _CFG["hosts"].items()}
+HOST_IMAGE = {n: h.get("image") for n, h in _CFG["hosts"].items()}
 
 
 def route_check(lane, workflow):
@@ -772,6 +773,12 @@ def cmd_submit(args):
             data = f.read()
         job["script_path"] = os.path.abspath(args.script)
         job["script_sha256"] = hashlib.sha256(data).hexdigest()
+        image = getattr(args, "image", None) \
+            or HOST_IMAGE.get(LANE_HOST.get(args.lane))
+        if image:
+            job["image"] = image
+        if getattr(args, "mounts", None):
+            job["mounts"] = args.mounts
     save_job(job)
     ledger("submitted", job_id=job["id"], key=job["key"],
            program=job["program"], workflow=job["workflow"],
@@ -915,6 +922,10 @@ def dispatch_one(job, jobs):
                    "-f", "lane=" + lane_label]
         if job.get("cwd"):
             gh_args += ["-f", "cwd=" + job["cwd"]]
+        if job.get("image"):
+            gh_args += ["-f", "image=" + job["image"]]
+        if job.get("mounts"):
+            gh_args += ["-f", "mounts=" + job["mounts"]]
     rc, out, err = run_cmd(["gh"] + gh_args, timeout=60)
     run_id = None
     # Newer gh prints the created run URL on stdout - most robust capture.
@@ -1440,6 +1451,12 @@ def main(argv=None):
     p.add_argument("--script")
     p.add_argument("--grab-path")
     p.add_argument("--cwd")
+    p.add_argument("--image",
+                   help="container image for a docker-transport job "
+                        "(defaults to the lane host's configured image)")
+    p.add_argument("--mounts",
+                   help="comma-separated host:container mount pairs "
+                        "for a docker-transport job")
     p.add_argument("--expected-min", type=float)
     p.add_argument("--key", required=True)
     p.add_argument("--maintenance", action="store_true",

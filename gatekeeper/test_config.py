@@ -123,6 +123,8 @@ expect_error("reject workflow served by no host",
              "workflows:\n  - run.yml\n  - wsl.yml\n  - grab.yml\n  - orphan.yml\n")
 expect_error("reject empty identity",
              "hosts:\n  desktop:\n    identity: []\n")
+expect_error("reject empty host image",
+             "hosts:\n  desktop:\n    image: ''\n")
 
 print()
 if fails:
