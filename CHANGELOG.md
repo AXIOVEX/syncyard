@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 010 Phase 4 (FR-006) — the agent skills pack:
+  `skills/` ships eight editions generated from one shared
+  source (`skills/_source/contract.md` via
+  `skills/build_skills.py`) in the Amendment 1 ranking —
+  Meta Muse (primary), Claude Code, GitHub Copilot, OpenAI
+  Codex/ChatGPT, Cursor, Google Gemini/Antigravity,
+  generic-agent, and a CLI-only fallback. Each edition carries
+  the FR-009 security invariant verbatim; the T016 currency
+  battery (`skills/test_skills.py`, in CI) pins every edition
+  to the repo VERSION, the invariant, and the shared source
+  (drift fails the build).
 - Spec 010 — public release program (owner direction,
   2026-10-30): configurability as a single config file (lane
   count/names, watermarks, budgets, endpoints, transport
