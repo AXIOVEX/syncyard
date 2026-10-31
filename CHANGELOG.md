@@ -65,6 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   states its host contract; execution bodies unchanged
   from the proven production shape. New contract battery
   in CI pins dispatch-only triggers and lane binding.
+- Spec 010 Phase 2 COMPLETE (T008/T009, 2026-10-31):
+  native Linux and macOS transports (one shared script
+  body, drift-checked), a Docker transport (caller image,
+  declared mounts, results land on the host for grab
+  return), and gatekeeper `--image`/`--mounts` submit
+  options with host-config image fallback — all pinned by
+  golden argv checks and a hosted smoke battery
+  (ubuntu + macOS + a docker-required job).
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel

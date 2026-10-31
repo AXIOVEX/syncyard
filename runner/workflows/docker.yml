@@ -1,0 +1,60 @@
+# Syncyard docker workflow - version 0.2.0
+# Part of AXIOVEX/syncyard. Dispatch-only by design: this workflow binds
+# self-hosted runners and must NEVER be triggered by pull_request,
+# pull_request_target, issues, or any other unprivileged event.
+# See SECURITY.md - the security model depends on it.
+#
+# Host contract (spec 010 FR-003/FR-004): a docker venue is a named
+# image run on the host addressed by the `lane` input. The caller
+# specifies the image and any mounts (comma-separated
+# host:container pairs); the job script runs inside the container
+# with bash. Files the job writes into a declared mount are on the
+# host when the run ends — return them with the grab workflow.
+# The step runs under bash: use a Linux or macOS runner, or a
+# Windows runner whose bash is on PATH.
+name: docker
+
+on:
+  workflow_dispatch:
+    inputs:
+      lane:
+        description: "Runner lane label (from the gatekeeper's config)"
+        required: false
+        default: 'lane-long'
+      image:
+        description: "Container image to run the job in"
+        required: true
+      cmd_b64:
+        description: "Base64-encoded bash script to execute inside the container"
+        required: true
+      mounts:
+        description: "Comma-separated host:container mount pairs (optional)"
+        required: false
+        default: ''
+      cwd:
+        description: "Working directory inside the container"
+        required: false
+        default: '/'
+
+jobs:
+  docker:
+    runs-on: [self-hosted, "${{ inputs.lane }}"]
+    timeout-minutes: 360
+    steps:
+      - name: Execute-Docker
+        shell: bash
+        env:
+          CMD_B64: ${{ inputs.cmd_b64 }}
+          JOB_IMAGE: ${{ inputs.image }}
+          JOB_MOUNTS: ${{ inputs.mounts }}
+          JOB_CWD: ${{ inputs.cwd }}
+        run: |
+          d="$RUNNER_TEMP/syncyard-job"
+          mkdir -p "$d"
+          printf '%s' "$CMD_B64" | openssl base64 -d -A > "$d/job.sh"
+          args=(--rm -v "$d:/syncyard-job:ro")
+          if [ -n "$JOB_MOUNTS" ]; then
+            IFS=',' read -ra pairs <<< "$JOB_MOUNTS"
+            for p in "${pairs[@]}"; do args+=(-v "$p"); done
+          fi
+          docker run "${args[@]}" -w "${JOB_CWD:-/}" "$JOB_IMAGE" bash /syncyard-job/job.sh
