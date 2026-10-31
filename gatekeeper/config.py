@@ -24,6 +24,7 @@ Validation (load time, all named errors):
     (needs floor)
   - budget critical < standdown
   - transport ceiling positive
+  - liveness threshold (spec 011 FR-001) a positive number
 """
 import os
 import re
@@ -55,6 +56,11 @@ DEFAULTS = {
     },
     "transport": {"max_script_bytes": 49152},
     "markers": {"pattern": r"^[A-Z][A-Z0-9_]{2,}([ :]|$)"},
+    # Host liveness (spec 011 FR-001): the gatekeeper reads each
+    # host's heartbeat on its sweep cadence and keeps its own
+    # last-seen record; a host whose heartbeat is older than this
+    # many seconds is shown DOWN.
+    "liveness": {"down_after_s": 900},
     "hosts": {
         "desktop": {
             "type": "windows",
@@ -286,6 +292,12 @@ def validate(cfg):
         raise ConfigError("budget.critical_remaining must be < budget.standdown_remaining")
     if (cfg.get("transport") or {}).get("max_script_bytes", 0) <= 0:
         raise ConfigError("transport.max_script_bytes must be positive")
+    down_after = (cfg.get("liveness") or {}).get("down_after_s")
+    if (isinstance(down_after, bool)
+            or not isinstance(down_after, (int, float))
+            or down_after <= 0):
+        raise ConfigError(
+            "liveness.down_after_s must be a positive number of seconds")
     hosts = cfg.get("hosts") or {}
     declared = cfg.get("workflows") or []
     served = set()

@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 011 Phase 1 (T001–T003, gatekeeper side, 2026-10-31):
+  host liveness and the going-down record. New config
+  `liveness.down_after_s` (default 900, validated positive,
+  fail closed). Each sweep reads the backchannel heartbeat
+  once and keeps a per-host last-seen record (`hosts.json`,
+  verified writes); `gk status` renders every host UP/DOWN
+  with its heartbeat age. A going-down record arriving as
+  the heartbeat's `going_down` field is ingested exactly
+  once per (host, ts): a `host_going_down` ledger event,
+  `interrupted_by: "host-shutdown"` annotations on the
+  affected job records, one outbox push per affected notify
+  registration, and a dispatch hold on the host's lanes
+  until `gk host-resume <host>` clears it (the Phase-1
+  stand-in for the FR-010 recovery handshake). The
+  gatekeeper still never cancels and never re-dispatches.
+  The protection level is unchanged and stated plainly in
+  the spec: delay + drain + checkpoint + notify, never
+  prevent.
 - Spec 010 Phase 6 (T021, 2026-10-31): `docs/github-pitch.md`
   — the GitHub adoption pitch brief (gh-extension-first
   shape). Prepared only; not sent — the owner's explicit

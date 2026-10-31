@@ -57,6 +57,8 @@ check("golden budget", (cfg["budget"]["standdown_remaining"],
                         cfg["budget"]["critical_remaining"]) == (1000, 500))
 check("golden marker pattern",
       cfg["markers"]["pattern"] == r"^[A-Z][A-Z0-9_]{2,}([ :]|$)")
+check("golden liveness threshold (spec 011 FR-001)",
+      cfg["liveness"]["down_after_s"] == 900)
 check("golden log cap", cfg["retention"]["human_log_max_bytes"] == 1000000)
 check("golden cwd windows", cfg["hosts"]["desktop"]["cwd"]["run.yml"] == r"C:\Users\trist")
 check("golden cwd grab null", cfg["hosts"]["desktop"]["cwd"]["grab.yml"] is None)
@@ -87,7 +89,8 @@ check("no beside-file config in repo gatekeeper dir", not os.path.exists(beside)
 dflt = cfgmod.load_config(None)
 check("defaults == example fleet surface",
       dflt["lanes"] == cfg["lanes"] and dflt["hosts"] == cfg["hosts"]
-      and dflt["budget"] == cfg["budget"] and dflt["workflows"] == cfg["workflows"])
+      and dflt["budget"] == cfg["budget"] and dflt["workflows"] == cfg["workflows"]
+      and dflt["liveness"] == cfg["liveness"])
 
 # 4: partial override merges.
 with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -125,6 +128,22 @@ expect_error("reject empty identity",
              "hosts:\n  desktop:\n    identity: []\n")
 expect_error("reject empty host image",
              "hosts:\n  desktop:\n    image: ''\n")
+expect_error("reject zero liveness threshold",
+             "liveness:\n  down_after_s: 0\n")
+expect_error("reject negative liveness threshold",
+             "liveness:\n  down_after_s: -5\n")
+expect_error("reject non-numeric liveness threshold",
+             "liveness:\n  down_after_s: soon\n")
+expect_error("reject boolean liveness threshold",
+             "liveness:\n  down_after_s: true\n")
+
+# 6: a valid liveness override loads and lands.
+with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+    f.write("liveness:\n  down_after_s: 120\n")
+    path = f.name
+over = cfgmod.load_config(path)
+os.unlink(path)
+check("liveness override loads", over["liveness"]["down_after_s"] == 120)
 
 print()
 if fails:

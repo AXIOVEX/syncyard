@@ -44,6 +44,18 @@ transport:
 markers:
   pattern: "^[A-Z][A-Z0-9_]{2,}([ :]|$)"
 
+# Host liveness (spec 011 FR-001). The gatekeeper reads each
+# host's heartbeat (the backchannel heartbeat is the transport)
+# on its sweep cadence and keeps its own last-seen record per
+# host; `gk status` shows each host UP or DOWN with its
+# heartbeat age. A host whose heartbeat is older than this
+# many seconds is DOWN. DOWN only means it stopped reporting
+# — the cause is recovery reconciliation's to determine.
+# Failure mode: a non-positive or non-numeric value fails
+# closed at load.
+liveness:
+  down_after_s: 900
+
 # Hosts. Each host names its type, the transport workflows it
 # serves (execute = run a script, grab = return a file), the
 # identity markers its venues prove themselves with, and its

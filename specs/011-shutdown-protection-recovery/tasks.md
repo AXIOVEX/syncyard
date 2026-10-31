@@ -12,19 +12,66 @@ and SKILL.md / skills-pack updates in the same change as any
 behavior (spec 011 FR-014).
 
 ## Phase 1 — Liveness and the going-down record (FR-001, FR-003, FR-006)
-- [ ] T001 Host liveness model: per-host last-seen record at
+- [x] T001 Host liveness model: per-host last-seen record at
       the gatekeeper; sweep reads the host heartbeat (backchannel
       transport) and `gk status` renders host UP/DOWN against a
       configurable threshold. Golden battery pins the sweep's
       read cost and the status rendering.
-- [ ] T002 Going-down record format + verified-write writer
+- [x] T002 Going-down record format + verified-write writer
       (host side) and gatekeeper ingest: ledger `host_going_down`
       event, per-record `interrupted_by` annotation, dispatch
       hold for the host. Golden battery pins ledger + annotations
       byte-for-byte on fixtures.
-- [ ] T003 Outbox notification on going-down (FR-004): one group
+- [x] T003 Outbox notification on going-down (FR-004): one group
       per affected notify registration + owning chat; duplicate
       suppression on re-sweep pinned by test.
+
+## Phase 1 progress
+- [x] T001–T003 (gatekeeper side, 2026-10-31): `liveness.
+      down_after_s` config (default 900, positive number,
+      fail-closed validation; mirrored in the example config and
+      the config battery). Every sweep makes ONE backchannel
+      contents read — the read class the sweep already spends —
+      refreshing the per-host last-seen record in `hosts.json`
+      beside the queue (verified writes); the heartbeat proves
+      the WSL2 host and its `via` chain. `gk status` renders
+      each host UP/DOWN + heartbeat age from that record and
+      spends no API doing it. A merely stale heartbeat records
+      DOWN but never blocks dispatch in this phase; only a
+      going-down ingest sets a dispatch hold.
+      Going-down record format (JSON): `host`, `ts` (the
+      drain's start), `trigger` (shutdown | logoff | update |
+      unknown), `active_run_ids`, `supervised` (list of
+      `{id, checkpoint}`), `uncheckpointed` (list of ids). The
+      host delivers it as a `going_down` field on its heartbeat
+      payload; the sweep detects it there and calls
+      `ingest_going_down`, which ledgers `host_going_down`,
+      annotates each affected job `interrupted_by:
+      "host-shutdown"` + `interrupted_at` (a ledger
+      `interrupted` line per job is what the outbox turns into
+      one push per affected notify registration), and sets the
+      host's dispatch hold. Ingest is exactly-once per
+      (host, ts) — the dedupe lives in the liveness state
+      file. The hold clears via `gk host-resume <host>`, the
+      Phase-1 stand-in for the FR-010 recovery handshake
+      (Phase 5). The gatekeeper never cancels and never
+      re-dispatches. Two honest gaps, named: (1) the
+      owning-chat copy of the FR-004 notification — the outbox
+      has no default/owning target concept today (groups are
+      keyed by per-job notify registrations only), so Phase 1
+      notifies the registered targets and the owning chat sees
+      the event on the status board and in the ledger; an
+      owning-chat route needs a config decision. (2) The
+      host-side verified-write writer + backchannel push of
+      the record (FR-003 host side) ships with the guard
+      (Phase 3); the spec 009 runbook's message-set update
+      rides that same change — this phase changes no agent
+      behavior and invents no second heartbeat format (the
+      reader is the one `gk status` already used).
+      `gatekeeper/test_golden.py` scenario 6 pins all of it
+      (aging -> DOWN, ledger lines, annotations, hold,
+      host-resume, single outbox group, duplicate suppression);
+      `test_config.py` covers the new key valid/invalid.
 
 ## Phase 2 — The drain protocol (FR-005, FR-007)
 - [ ] T004 Drain signal + checkpoint window mechanics: guard →
