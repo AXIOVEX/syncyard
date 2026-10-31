@@ -408,3 +408,25 @@ the T016 currency battery (`skills/test_skills.py`) in CI.
 This fleet SKILL.md remains the operator's own copy; adopter
 editions derive from the shared contract, and behavior changes
 update both in the same change.
+
+## Spec 011 — shutdown protection and recovery (specified 2026-10-31, draft)
+
+Owner direction: when a host machine shuts down, Syncyard
+must handle outstanding work — delay the shutdown while a
+bounded drain checkpoints active jobs and supervised work,
+record a going-down record with the affected run ids, and on
+the host's return recover runners without an interactive
+logon, relaunch supervised campaigns from their checkpoints,
+reconcile every interrupted run against GitHub's truth, and
+issue a recovery report that states any loss plainly. The
+protection level is **delay + drain + checkpoint + notify —
+never prevent**: nothing in the spec vetoes a forced
+shutdown, a power loss, or an insisting administrator, and
+its text says so in those words. The spec also generalizes
+the proven scheduled-task anchor (supervisor + ensure +
+heartbeat) into a first-class supervised-work vehicle, and
+names its tension with spec 007 FR-003 (runners are not
+Windows services) as an owner-gated evaluation, not a
+presumption. Spec text lives at
+`specs/011-shutdown-protection-recovery/`; specified only,
+no implementation yet.
