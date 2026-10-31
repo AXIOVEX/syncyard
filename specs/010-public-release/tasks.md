@@ -13,10 +13,10 @@ reconciliation around the cutover).
       effective config; absent keys fall back to today's
       constants; invalid config fails closed with a named
       error, never a silent default.
-- [ ] T003 Lane generalization: lane set, concurrency, and
+- [x] T003 Lane generalization: lane set, concurrency, and
       watermark tables read from config; validation battery
       (duplicate names, bad host refs, inverted watermarks).
-- [ ] T004 Golden tests: fixture queue driven under the fleet
+- [x] T004 Golden tests: fixture queue driven under the fleet
       config produces byte-identical dispatch decisions to the
       pre-config code path.
 - [ ] T005 Fleet cutover to config: queue snapshot, switch,
@@ -101,3 +101,19 @@ reconciliation around the cutover).
       $SYNCYARD_HOME) → `gh syncyard status` printed the live
       fleet status (491 completed jobs) through the real
       gh CLI.
+
+## Phase 1 progress (slice 2)
+- [x] T003 + T004 (2026-10-31): gk.py now binds every config
+      constant from the effective config at import (repos,
+      budgets, dispatch knobs, workflows, lane set + runner
+      labels + per-lane concurrency, queued/executing
+      watermark tables, merged host cwd map, marker pattern,
+      log cap); a config that fails validation exits loudly
+      (fail closed). `gatekeeper/test_golden.py`: 17 constant
+      anchors against the pre-config literals + fixture-queue
+      dispatch equivalence (defaults vs fleet example yaml,
+      byte-identical decisions in lanes-live and pre-lane-cap
+      scenarios, also pinned against hand-computed semantics).
+      All batteries pass; test_golden wired into CI. T005
+      fleet cutover follows behind its queue snapshot +
+      reconciliation.
