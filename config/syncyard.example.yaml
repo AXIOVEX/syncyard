@@ -44,12 +44,22 @@ transport:
 markers:
   pattern: "^[A-Z][A-Z0-9_]{2,}([ :]|$)"
 
-# Hosts. Each host names its type and its default working
-# directories per workflow. `desktop` is the fleet's Windows
-# host; `desktop-wsl` is its WSL2 distro, reached through it.
+# Hosts. Each host names its type, the transport workflows it
+# serves (execute = run a script, grab = return a file), the
+# identity markers its venues prove themselves with, and its
+# default working directories per workflow. `desktop` is the
+# fleet's Windows host; `desktop-wsl` is its WSL2 distro,
+# reached through it (its workflows ride the via host's
+# runner). A job addressed to a lane runs on that lane's host
+# or is refused — never silently rerouted (FR-004).
 hosts:
   desktop:
     type: windows
+    workflows:
+      run.yml: execute
+      wsl.yml: execute
+      grab.yml: grab
+    identity: [LID_HOST, LID_WINUSER, LID_OS]
     cwd:
       run.yml: "C:\\Users\\trist"
       grab.yml: null
@@ -57,6 +67,10 @@ hosts:
     type: wsl2
     via: desktop
     distro: Ubuntu-24.04
+    workflows:
+      wsl.yml: execute
+      grab.yml: grab
+    identity: [LID_HOST, LID_WSLUSER, LID_OS]
     cwd:
       wsl.yml: /home/tpierson
 

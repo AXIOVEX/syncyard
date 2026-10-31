@@ -112,6 +112,17 @@ expect_error("reject duplicate key",
 expect_error("reject bad executing mode",
              "lanes:\n  quick:\n    executing:\n      mode: sideways\n")
 expect_error("reject bad version", "version: 2\n")
+expect_error("reject host serves undeclared workflow",
+             "hosts:\n  desktop:\n    workflows:\n      teleport.yml: execute\n")
+expect_error("reject bad workflow kind",
+             "hosts:\n  desktop:\n    workflows:\n      run.yml: sideways\n")
+expect_error("reject wsl2 workflow not served by via host",
+             "hosts:\n  desktop-wsl:\n    workflows:\n      wsl.yml: execute\n      mac.yml: execute\n"
+             "workflows:\n  - run.yml\n  - wsl.yml\n  - grab.yml\n  - mac.yml\n")
+expect_error("reject workflow served by no host",
+             "workflows:\n  - run.yml\n  - wsl.yml\n  - grab.yml\n  - orphan.yml\n")
+expect_error("reject empty identity",
+             "hosts:\n  desktop:\n    identity: []\n")
 
 print()
 if fails:
