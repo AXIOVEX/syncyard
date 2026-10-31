@@ -142,5 +142,11 @@ reconciliation around the cutover).
       a macos host added by config alone, all pinned. Fleet
       behavior unchanged (every fleet lane sits on the
       windows host, which serves all three transports).
-      Fleet cutover of the routing build follows the Phase 1
-      shape (snapshot, deploy, reconcile) as an operator step.
+      Fleet cutover DONE the same day, Phase 1 shape:
+      snapshot 534 records (open set 2 at deploy time), wired
+      gk.py + config.py + refreshed fleet syncyard.yaml
+      deployed by atomic rename (hashes match main), open
+      jobs verified routing to (desktop, execute), misroute
+      refusal proven in-process, reconciliation exact
+      (534 = 534), first sweep on the routing build clean
+      (dispatched 1, budget 4,985).
