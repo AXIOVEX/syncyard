@@ -238,6 +238,39 @@ reconciliation around the cutover).
       was also hardened (it waited on a stale heartbeat ts and
       raced the restarted agent — the PR #26 CI flake); three
       consecutive local passes, 18 checks.
+- [x] Diagnosis closure (2026-10-31, old-agent grab jobs
+      20261031T114449Z-bc-oldagent-grab-20261031-fa568a —
+      failed, a WSL path handed to the Windows-side grab —
+      and 20261031T122603Z-bc-oldagent-grab-unc-20261031-e661ff
+      — UNC path, artifact 13043258851): the preserved
+      pre-Phase-3 agent.sh came back byte-identical (sha256
+      2a050a313681c6138f57512b0885c9af00aff871f4de238d08e05aff7059db01,
+      matching the hash recorded on the desktop
+      at deploy time). Reading it closes the mechanism
+      question as far as the evidence reaches: (1) the script
+      prints `agent starting` exactly once, at main_loop
+      entry, and contains no re-entry, self-exec, or internal
+      restart — every ~600 s start line in agent.log is a
+      fresh process start driven from outside the script;
+      (2) the unit is Type=simple, Restart=on-failure,
+      RestartSec=15, no timer or watchdog, and the deploy
+      forensics recorded NRestarts=0 — the starts did not
+      come through systemd's restart path either; the starter
+      cadence's source stays unidentified (WSL instance
+      cycling under runner traffic is the remaining
+      candidate) and is not pursued, because it does not
+      change the fix; (3) the freeze step is pinned: in the
+      old build the cycle's first network operation,
+      `git pull --ff-only`, is unbounded, as are the clone,
+      push, and pull --rebase — a fresh instance whose first
+      pull stalls writes no heartbeat, which is exactly the
+      stall signature (starts at 11:05:57Z and 11:15:57Z,
+      heartbeat unmoved until the 11:19:11Z start completed
+      its cycle). The Phase 3 build bounds all six network
+      git operations at SYNCBC_GIT_TIMEOUT_S (120 s; clone
+      2x), so the wedge class is closed regardless of what
+      starts the process. Root-cause item CLOSED on that
+      basis.
 
 ## Phase 4 progress
 - [x] T014–T016 (2026-10-31): the skills pack ships eight
