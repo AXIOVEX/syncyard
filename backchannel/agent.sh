@@ -33,6 +33,7 @@ DEFAULT_TIMEOUT_S="${SYNCBC_TIMEOUT_S:-600}"
 TAIL_BYTES="${SYNCBC_TAIL_BYTES:-8000}"
 LOG_FILE="$BASE/agent.log"
 LAST_ID_FILE="$BASE/.last_executed_id"
+SELFTEST_FILE="$BASE/.self_test.json"
 
 mkdir -p "$BASE"
 
@@ -59,9 +60,9 @@ write_heartbeat() {
     local stopped="$1"
     local last_id=""
     [ -f "$LAST_ID_FILE" ] && last_id="$(cat "$LAST_ID_FILE" 2>/dev/null)"
-    python3 - "$REPO_DIR/$CHANNEL_REL/heartbeat.json" "$last_id" "$stopped" <<'PY' 2>/dev/null || true
+    python3 - "$REPO_DIR/$CHANNEL_REL/heartbeat.json" "$last_id" "$stopped" "$SELFTEST_FILE" <<'PY' 2>/dev/null || true
 import json, os, socket, sys, datetime
-path, last_id, stopped = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
+path, last_id, stopped, selftest_path = sys.argv[1], sys.argv[2], sys.argv[3] == "1", sys.argv[4]
 data = {
     "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     "host": socket.gethostname(),
@@ -71,12 +72,57 @@ data = {
     "last_executed_id": last_id or None,
     "stopped": stopped,
 }
+try:
+    with open(selftest_path, encoding="utf-8") as fh:
+        data["self_test"] = json.load(fh)
+except Exception:
+    pass
 tmp = path + ".tmp"
 with open(tmp, "w", encoding="utf-8") as fh:
     json.dump(data, fh, indent=1, sort_keys=True)
     fh.write("\n")
 os.replace(tmp, path)
 PY
+}
+
+run_self_test() {
+    # Start-up self-test (spec 010 T010): tools present, base and
+    # log writable, channel repo reachable, channel dir writable.
+    # The result is written to .self_test.json and rides every
+    # heartbeat until the next start. A failed check never stops
+    # the agent - it reports, so the failure is visible remotely.
+    local git_ok=0 python_ok=0 base_ok=0 log_ok=0 repo_ok=0 channel_ok=0
+    command -v git >/dev/null 2>&1 && git_ok=1
+    command -v python3 >/dev/null 2>&1 && python_ok=1
+    [ -w "$BASE" ] && base_ok=1
+    ( printf '' >> "$LOG_FILE" ) 2>/dev/null && log_ok=1
+    if [ -d "$REPO_DIR/.git" ]; then
+        git -C "$REPO_DIR" ls-remote -q origin HEAD >/dev/null 2>&1 && repo_ok=1
+        [ -w "$REPO_DIR/$CHANNEL_REL" ] && channel_ok=1
+    fi
+    python3 - "$SELFTEST_FILE" "$git_ok" "$python_ok" "$base_ok" "$log_ok" "$repo_ok" "$channel_ok" <<'PY' 2>/dev/null || true
+import datetime, json, os, sys
+path = sys.argv[1]
+checks = {
+    "git": sys.argv[2] == "1",
+    "python3": sys.argv[3] == "1",
+    "base_writable": sys.argv[4] == "1",
+    "log_writable": sys.argv[5] == "1",
+    "repo_reachable": sys.argv[6] == "1",
+    "channel_writable": sys.argv[7] == "1",
+}
+data = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "ok": all(checks.values()),
+    "checks": checks,
+}
+tmp = path + ".tmp"
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(data, fh, indent=1, sort_keys=True)
+    fh.write("\n")
+os.replace(tmp, path)
+PY
+    log "self-test written (ok checks: git=$git_ok python3=$python_ok base=$base_ok log=$log_ok repo=$repo_ok channel=$channel_ok)"
 }
 
 write_out() {
@@ -181,6 +227,8 @@ PY
 
 main_loop() {
     log "agent starting (base=$BASE repo=$REPO_DIR poll_s=$POLL_S)"
+    ensure_repo || log "initial clone failed; self-test will report repo unreachable"
+    run_self_test
     while true; do
         if ! ensure_repo; then
             log "clone failed; retrying next cycle"

@@ -34,11 +34,11 @@ reconciliation around the cutover).
       declared mounts, result return via grab) + battery.
 
 ## Phase 3 — Backchannel hardening (FR-005)
-- [ ] T010 Agent start-up self-test; result in heartbeat.
-- [ ] T011 `gk status` heartbeat age + stale alarm (>5 min).
-- [ ] T012 Chaos battery: kill/restart, corrupt cmd.json,
+- [x] T010 Agent start-up self-test; result in heartbeat.
+- [x] T011 `gk status` heartbeat age + stale alarm (>5 min).
+- [x] T012 Chaos battery: kill/restart, corrupt cmd.json,
       duplicate ids, STOP halts execution, heartbeat survives.
-- [ ] T013 Recovery runbook shipped (spec 009 FR-007 cases).
+- [x] T013 Recovery runbook shipped (spec 009 FR-007 cases).
 
 ## Phase 4 — Agent skills (FR-006)
 - [ ] T014 `skills/meta-muse/SKILL.md` — primary package.
@@ -186,3 +186,26 @@ reconciliation around the cutover).
       unchanged); the example config carries commented Linux
       and Docker adopter examples. Spec 010 Phase 2
       (FR-003/FR-004) is COMPLETE.
+
+## Phase 3 progress
+- [x] T010–T013 (2026-10-31): the backchannel agent runs a
+      start-up self-test (git, python3, base/log writable,
+      repo reachable, channel writable) whose result rides
+      every heartbeat as `self_test`; bc.py prints it
+      (BC_SELFTEST). `gk status` gained a backchannel line —
+      heartbeat age, host, stopped, self-test — with a
+      `!! BACKCHANNEL STALE` alarm past 300 s (one contents
+      call per status run; sweeps unaffected). New chaos
+      battery (backchannel/test_chaos.py, 16 checks, in CI):
+      the real agent against a local file:// channel —
+      execute, duplicate-id refusal, corrupt cmd survival,
+      STOP halt + resume, kill -9 restart with no replay.
+      RUNBOOK.md ships the FR-007 recovery cases (tray
+      restart via one-shot task, tray.log read, runner-lane
+      restart, network diagnostics) plus failure triage.
+      Field note: the T011 line's first live run caught the
+      production agent genuinely stalled (heartbeat frozen
+      2026-10-31T11:05:57Z; no command executing, STOP
+      absent) — diagnosis + agent update ride the fleet
+      deploy of this phase. Spec 010 Phase 3 (FR-005) is
+      COMPLETE in the repo.

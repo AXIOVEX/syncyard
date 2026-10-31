@@ -73,6 +73,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   options with host-config image fallback — all pinned by
   golden argv checks and a hosted smoke battery
   (ubuntu + macOS + a docker-required job).
+- Spec 010 Phase 3 COMPLETE (T010–T013, 2026-10-31): the
+  backchannel agent self-tests at start-up and reports
+  the result in every heartbeat; `gk status` shows the
+  heartbeat age with a stale alarm past five minutes;
+  a 16-check chaos battery (duplicates, corruption, STOP,
+  kill/restart) runs the real agent in CI; and the
+  recovery runbook ships the four FR-007 cases with
+  pre-written command bodies.
 - Spec 009 — failsafe backchannel (owner override order,
   2026-10-29: Syncyard must have a failsafe backchannel for when
   Syncyard itself is down or blocked, with a dedicated channel
