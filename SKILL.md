@@ -83,6 +83,14 @@ $GK purge --older-than-days 7 --yes
 # once they have been delivered.
 $GK outbox
 $GK outbox --ack
+
+# Host liveness (spec 011): status shows each host UP/DOWN with
+# its heartbeat age (the sweep keeps the gatekeeper's own
+# last-seen record). When a host reports it is going down, the
+# gatekeeper holds dispatch to that host; once the host is back
+# and verified, clear the hold (Phase-1 stand-in for the
+# recovery handshake):
+$GK host-resume <host>
 ```
 
 - Every job carries a **unique `--key`**. Submitting a key that is already
@@ -147,6 +155,18 @@ $GK outbox --ack
   and the cursor advances (`outbox --ack`) only after the
   coordinator has delivered them into the named chats. Pushes ride
   the existing sweep cadence; there is no server to run.
+- **Host liveness and going-down** (spec 011 FR-001/FR-006): the
+  sweep reads the backchannel heartbeat once per pass and keeps a
+  per-host last-seen record; `gk status` renders each host **UP**
+  or **DOWN** (heartbeat older than `liveness.down_after_s`,
+  default 900 s) — DOWN means it stopped reporting, nothing more.
+  A going-down record from a host ledgers `host_going_down`,
+  annotates the affected jobs `interrupted_by: "host-shutdown"`,
+  pushes one outbox notice per affected registration, and holds
+  dispatch to that host (queued jobs wait; nothing reroutes, and
+  the gatekeeper never cancels or re-dispatches). The hold clears
+  with `gk host-resume <host>` once the host is back — the Phase-1
+  stand-in for the recovery handshake.
 
 ## Periodic status-check duty (spec 009 FR-005)
 

@@ -39,6 +39,7 @@ LOCK_DIR = os.path.join(BASE, ".sweep.lock")
 PAUSE_FILE = os.path.join(BASE, "PAUSED.json")
 STOP_FILE = os.path.join(BASE, "STOPPED.json")
 OUTBOX_CURSOR = os.path.join(BASE, "outbox-cursor.json")
+HOSTS_FILE = os.path.join(BASE, "hosts.json")   # host liveness (spec 011)
 LANES_LIVE_FILE = os.path.join(BASE, "LANES_LIVE")
 
 REPO = "tbitcs/desktop-runner"
@@ -118,6 +119,7 @@ DEFAULT_CWD = {}
 for _h in _CFG["hosts"].values():
     DEFAULT_CWD.update(_h.get("cwd") or {})
 MARKER_RE = re.compile(_CFG["markers"]["pattern"])
+LIVENESS_DOWN_AFTER_S = _CFG["liveness"]["down_after_s"]
 
 # Host routing (spec 010 FR-003/FR-004): a job names a lane; the
 # lane's host is the venue. A workflow the host does not serve is
@@ -519,6 +521,12 @@ def cmd_outbox(args):
             msg = "%s ESCALATED W2 %s run %s age=%s min" % (
                 head, ev.get("classification"), ev.get("run_id"),
                 ev.get("age_min"))
+        elif ev.get("event") == "interrupted":
+            # Spec 011 FR-004: the job's host went down mid-flight.
+            msg = ("%s INTERRUPTED run %s — host %s going down at %s "
+                   "(trigger=%s)" % (
+                       head, ev.get("run_id"), ev.get("host"),
+                       ev.get("ts"), ev.get("trigger")))
         if msg:
             groups.setdefault(job["notify_chat"], []).append(msg)
     if not groups:
@@ -994,11 +1002,20 @@ def dispatch_pass(jobs, runs_by_id):
     waiting = sorted([j for j in jobs if j["state"] == "submitted"],
                      key=lambda j: j["created_at"])
     paused = (pause_state() is not None or stop_state() is not None)
+    # Host dispatch holds (spec 011 FR-006): a host that has gone
+    # down takes no new dispatches on any of its lanes — maintenance
+    # included, the host is going away — until the hold is cleared
+    # (Phase 1: `gk host-resume`; the FR-010 recovery handshake
+    # replaces it in Phase 5). Queued jobs wait; nothing reroutes.
+    held_hosts = {h for h, r in load_hosts_state().items()
+                  if r.get("hold")}
     lanes_live = os.path.isfile(LANES_LIVE_FILE)
     for job in waiting:
         maint = bool(job.get("maintenance"))
         if paused and not maint:
             continue  # paused: program work holds; maintenance flows
+        if LANE_HOST.get(job["lane"]) in held_hosts:
+            continue  # host going down: held (see status board)
         if not lanes_live and active_count >= MAX_ACTIVE_DISPATCHED \
                 and not maint:
             ledger("dispatch_deferred_cap", job_id=job["id"], key=job["key"],
@@ -1274,6 +1291,11 @@ def cmd_sweep(_args):
         else:
             runs_by_id = {str(r["databaseId"]): r for r in runs}
         jobs = load_jobs()
+        # Host liveness + going-down ingest (spec 011 FR-001/003/006):
+        # one backchannel contents read, before dispatch so a
+        # just-ingested hold blocks this same pass. A liveness
+        # failure is ledgered inside and never breaks the sweep.
+        sweep_liveness(jobs)
         dispatched = 0
         if not standdown and not lerr:
             dispatched = dispatch_pass(jobs, runs_by_id)
@@ -1378,21 +1400,36 @@ def repo_health():
         print("  dependabot PRs: unavailable")
 
 
+def fetch_backchannel_heartbeat():
+    """(heartbeat dict, error) — ONE contents-API read of the
+    backchannel heartbeat, parsed exactly as backchannel_status_line
+    always parsed it (ts / host / stopped / self_test ride the
+    payload). Shared by the status line and the sweep's liveness
+    pass (spec 011 FR-001) so there is one heartbeat format, read
+    one way."""
+    data, err = gh_json(["api", "repos/%s/contents/%s"
+                         % (BC_REPO, BC_HEARTBEAT_PATH)])
+    if err or not data:
+        return None, err or "empty response"
+    try:
+        hb = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
+        datetime.strptime(hb["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+            tzinfo=timezone.utc)
+    except Exception as e:
+        return None, "unreadable heartbeat (%s)" % e
+    return hb, None
+
+
 def backchannel_status_line():
     """One status line for the failsafe backchannel (spec 010 T011):
     heartbeat age from the channel repo, with a stale alarm past
     BC_STALE_S. Fail-soft: any read error reports 'unknown', never
     breaks status. Costs one contents-API call per status run."""
-    data, err = gh_json(["api", "repos/%s/contents/%s"
-                         % (BC_REPO, BC_HEARTBEAT_PATH)])
-    if err or not data:
-        return "backchannel: heartbeat unknown (%s)" % (err or "empty response")
-    try:
-        hb = json.loads(base64.b64decode(data["content"]).decode("utf-8"))
-        ts = datetime.strptime(hb["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
-            tzinfo=timezone.utc)
-    except Exception as e:
-        return "backchannel: heartbeat unreadable (%s)" % e
+    hb, err = fetch_backchannel_heartbeat()
+    if hb is None:
+        return "backchannel: heartbeat unknown (%s)" % err
+    ts = datetime.strptime(hb["ts"], "%Y-%m-%dT%H:%M:%SZ").replace(
+        tzinfo=timezone.utc)
     age = int((datetime.now(timezone.utc) - ts).total_seconds())
     st = hb.get("self_test") or {}
     st_txt = "ok" if st.get("ok") else ("FAILED" if st else "absent")
@@ -1402,6 +1439,248 @@ def backchannel_status_line():
         line = ("!! BACKCHANNEL STALE: heartbeat %ds old (limit %ds) — %s"
                 % (age, BC_STALE_S, line))
     return line
+
+
+# --- Host liveness + going-down records (spec 011 FR-001/003/004/006) ------
+#
+# The gatekeeper keeps its own per-host liveness record in
+# hosts.json beside the queue (verified writes, like every other
+# gatekeeper state file):
+#
+#   { "<host>": {
+#       "last_seen":         ISO ts of the last sweep that read a
+#                            heartbeat for this host,
+#       "last_heartbeat_ts": the heartbeat's own ts at that read,
+#       "down":              last computed age verdict (bool),
+#       "hold":              dispatch hold in effect (bool),
+#       "hold_since":        going-down ts that set the hold,
+#       "going_down":        the last ingested going-down record
+#                            (with an added "ingested_at"), or null
+#   } }
+#
+# A host is DOWN when its heartbeat age exceeds
+# liveness.down_after_s (config), or while a dispatch hold stands.
+# DOWN is a record/display state; dispatch is held only by the
+# hold, which only a going-down ingest sets (FR-006) — a merely
+# stale heartbeat never blocks dispatch in this phase.
+
+GOING_DOWN_TRIGGERS = ("shutdown", "logoff", "update", "unknown")
+
+
+def load_hosts_state():
+    try:
+        with open(HOSTS_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_hosts_state(state):
+    _write_text_file(HOSTS_FILE,
+                     json.dumps(state, indent=2, sort_keys=True))
+
+
+def _host_record(state, host):
+    return state.setdefault(host, {
+        "last_seen": None, "last_heartbeat_ts": None, "down": False,
+        "hold": False, "hold_since": None, "going_down": None})
+
+
+def heartbeat_hosts():
+    """Config hosts whose liveness the backchannel heartbeat proves.
+    The channel agent runs inside a WSL2 distro, so its heartbeat
+    proves that distro's host and every host it rides `via`, in
+    chain order. (The heartbeat's own `host` field is the machine
+    hostname, not a config name, so attribution is by config
+    shape, not by that field.)"""
+    out = []
+    for name, htype in HOST_TYPE.items():
+        if htype != "wsl2":
+            continue
+        chain = [name]
+        via = HOST_VIA.get(name)
+        while via and via not in chain:
+            chain.append(via)
+            via = HOST_VIA.get(via)
+        for h in chain:
+            if h not in out:
+                out.append(h)
+    return out
+
+
+def sweep_liveness(jobs):
+    """The sweep's liveness pass (FR-001 + FR-003 detection): one
+    backchannel contents read — the same read class the sweep
+    already spends, one extra call per sweep — refreshing the
+    per-host last-seen record from the heartbeat, then ingesting
+    a going-down record if the heartbeat carries one (a
+    `going_down` field the host adds to its heartbeat payload).
+    Fail-soft: a read failure is ledgered and the pass returns;
+    liveness never breaks a sweep."""
+    state = load_hosts_state()
+    hb, err = fetch_backchannel_heartbeat()
+    if hb is None:
+        ledger("api_error", where="backchannel_heartbeat", error=err)
+        return state
+    ts = parse_iso(hb["ts"])
+    age = (now_dt() - ts).total_seconds() if ts else None
+    for host in heartbeat_hosts():
+        rec = _host_record(state, host)
+        rec["last_seen"] = now_iso()
+        rec["last_heartbeat_ts"] = hb["ts"]
+        rec["down"] = bool(age is not None
+                           and age > LIVENESS_DOWN_AFTER_S)
+    try:
+        save_hosts_state(state)
+    except (IOError, OSError) as exc:
+        hlog("HOSTS_SAVE_FAILED %s" % exc)
+    gd = hb.get("going_down")
+    if isinstance(gd, dict) and gd:
+        ingest_going_down(gd, jobs=jobs)
+    return state
+
+
+def ingest_going_down(record, jobs=None):
+    """Ingest one going-down record (spec 011 FR-003 gatekeeper
+    side + FR-006). The host side writes the record at the START
+    of a drain and pushes it through the backchannel; the sweep
+    detects it as the heartbeat's `going_down` field and calls
+    this. It is also directly callable (tests, operator use).
+
+    Record format (JSON object):
+      host:           config host name the record is about
+      ts:             ISO-8601 UTC timestamp the host wrote the
+                      record (the drain's start)
+      trigger:        shutdown | logoff | update | unknown
+      active_run_ids: [run ids active on the host at drain start]
+      supervised:     [{ "id": ..., "checkpoint": <pointer|null> }]
+                      supervised-work ids + checkpoint pointers
+      uncheckpointed: [ids that did not checkpoint in the window]
+
+    Effects, exactly once per (host, ts) — a re-sweep that sees
+    the same record again is a no-op (dedupe is recorded in the
+    liveness state file):
+      - ledger `host_going_down` (host, ts, trigger, counts)
+      - each affected job record gains interrupted_by=
+        "host-shutdown" and interrupted_at=<record ts>, plus a
+        ledger `interrupted` line — which is what the outbox
+        turns into one push per affected notify registration
+        (FR-004). Affected = an active job on one of the host's
+        lanes whose run id the record names; when the record
+        names no runs, every active job on the host's lanes.
+      - a per-host dispatch hold: dispatch_pass skips every lane
+        of the host until the hold clears. Phase 5's recovery
+        handshake (FR-010) clears it then; in Phase 1 the
+        stand-in is the operator command `gk host-resume <host>`.
+    The gatekeeper never cancels and never re-dispatches: an
+    annotated run may still complete in GitHub while the host
+    dies, and the watch pass adopts that truth as usual.
+    Returns a summary dict, or None when the record was already
+    ingested or is malformed (no host / no ts)."""
+    host = record.get("host")
+    ts = record.get("ts")
+    if not host or not ts:
+        return None
+    state = load_hosts_state()
+    rec = _host_record(state, host)
+    prior = rec.get("going_down") or {}
+    if prior.get("ts") == ts:
+        return None  # already ingested: no duplicate effects
+    if jobs is None:
+        jobs = load_jobs()
+    trigger = record.get("trigger")
+    if trigger not in GOING_DOWN_TRIGGERS:
+        trigger = "unknown"
+    run_ids = {str(r) for r in record.get("active_run_ids") or []}
+    affected = []
+    for j in jobs:
+        if LANE_HOST.get(j.get("lane")) != host:
+            continue
+        if run_ids:
+            if str(j.get("run_id")) not in run_ids:
+                continue
+        elif j["state"] not in ACTIVE_STATES:
+            continue
+        affected.append(j)
+    stored = {
+        "host": host, "ts": ts, "trigger": trigger,
+        "active_run_ids": sorted(run_ids),
+        "supervised": record.get("supervised") or [],
+        "uncheckpointed": record.get("uncheckpointed") or [],
+        "ingested_at": now_iso(),
+    }
+    rec["going_down"] = stored
+    rec["hold"] = True
+    rec["hold_since"] = ts
+    rec["down"] = True
+    save_hosts_state(state)
+    ledger("host_going_down", host=host, ts=ts, trigger=trigger,
+           active_runs=len(run_ids), affected_jobs=len(affected),
+           supervised=len(stored["supervised"]),
+           uncheckpointed=len(stored["uncheckpointed"]))
+    for j in affected:
+        j["interrupted_by"] = "host-shutdown"
+        j["interrupted_at"] = ts
+        j["interrupted_host"] = host
+        save_job_safe(j, "host_going_down")
+        ledger("interrupted", job_id=j["id"], key=j["key"],
+               run_id=j.get("run_id"), host=host, ts=ts,
+               trigger=trigger)
+    hlog("HOST_GOING_DOWN host=%s ts=%s trigger=%s affected=%d"
+         % (host, ts, trigger, len(affected)))
+    return {"host": host, "ts": ts, "trigger": trigger,
+            "affected": affected}
+
+
+def host_status_lines(state=None):
+    """Per-host liveness for `gk status` (FR-001): UP/DOWN plus
+    heartbeat age, rendered from the persisted last-seen record —
+    status spends no API on this; the sweep refreshes the record.
+    A host never seen renders UNKNOWN, never DOWN: no heartbeat
+    source has spoken for it yet."""
+    if state is None:
+        state = load_hosts_state()
+    out = []
+    for host in sorted(_CFG["hosts"]):
+        rec = state.get(host) or {}
+        hb_ts = parse_iso(rec.get("last_heartbeat_ts"))
+        if hb_ts is None:
+            out.append("host %s: UNKNOWN (no heartbeat seen)" % host)
+            continue
+        age = int((now_dt() - hb_ts).total_seconds())
+        down = bool(rec.get("hold")) or age > LIVENESS_DOWN_AFTER_S
+        line = "host %s: %s heartbeat %ds old (limit %ds)" % (
+            host, "DOWN" if down else "UP", age, LIVENESS_DOWN_AFTER_S)
+        if rec.get("hold"):
+            line += (" — dispatch HELD since %s (going down; "
+                     "`gk host-resume %s` clears)"
+                     % (rec.get("hold_since"), host))
+        gd = rec.get("going_down")
+        if gd:
+            line += " — going-down %s trigger=%s" % (
+                gd.get("ts"), gd.get("trigger"))
+        out.append(line)
+    return out
+
+
+def cmd_host_resume(args):
+    """Clear a host's going-down dispatch hold. Phase-1 stand-in
+    for the FR-010 recovery handshake (Phase 5): an operator
+    clears the hold by hand once the host is back and verified."""
+    state = load_hosts_state()
+    rec = state.get(args.host)
+    if rec is None or not rec.get("hold"):
+        print("host %s: no dispatch hold in effect" % args.host)
+        return 0
+    rec["hold"] = False
+    rec["hold_since"] = None
+    save_hosts_state(state)
+    ledger("host_resumed", host=args.host)
+    hlog("HOST_RESUMED %s at %s" % (args.host, now_iso()))
+    print("host %s: dispatch hold cleared (Phase-1 stand-in for "
+          "the FR-010 recovery handshake)" % args.host)
+    return 0
 
 
 def cmd_status(args):
@@ -1420,6 +1699,8 @@ def cmd_status(args):
               "maintenance jobs still flow)"
               % (ps.get("ts"), ps.get("reason") or "no reason recorded"))
     print(backchannel_status_line())
+    for line in host_status_lines():
+        print(line)
     print("jobs by state: %s" % (", ".join(
         "%s=%d" % (k, by_state[k]) for k in sorted(by_state)) or "none"))
     queued = [j for j in jobs if j.get("run_status") == "queued"
@@ -1546,6 +1827,13 @@ def main(argv=None):
 
     p = sub.add_parser("sweep")
     p.set_defaults(fn=cmd_sweep)
+
+    p = sub.add_parser("host-resume",
+                       help="clear a host's going-down dispatch hold "
+                            "(spec 011 FR-006; Phase-1 stand-in for "
+                            "the FR-010 recovery handshake)")
+    p.add_argument("host", help="config host name, e.g. desktop")
+    p.set_defaults(fn=cmd_host_resume)
 
     p = sub.add_parser("status")
     p.add_argument("--repo", action="store_true",

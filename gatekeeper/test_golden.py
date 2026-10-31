@@ -16,6 +16,12 @@ pre-config constants:
     global cap, duplicate-hash refusal, maintenance bypass), so a
     future behavior change fails loudly here instead of slipping
     through as an A==B pass.
+ 6. Host liveness + going-down ingest (spec 011 T001-T003): a
+    stubbed heartbeat ages a fixture host UP -> DOWN in the status
+    rendering; a fixture going-down record pins the ledger lines,
+    the per-record annotation, the dispatch hold, the single
+    outbox group, duplicate-ingest suppression, and the
+    `gk host-resume` stand-in clearing the hold.
 
 Stdlib only. Run: python3 gatekeeper/test_golden.py
 """
@@ -320,6 +326,194 @@ try:
                                         "-f", "path=/x/file.bin",
                                         "-f", "lane=lane-quick"],
           str(res["out"]["grab"]))
+finally:
+    shutil.rmtree(d, ignore_errors=True)
+
+# 6: host liveness + going-down ingest (spec 011 T001-T003) —
+# heartbeat aging flips UP -> DOWN in the status rendering; a
+# going-down record ledgers host_going_down, annotates the named
+# run's job, sets the dispatch hold, and produces exactly one
+# outbox group; a duplicate ingest is a no-op; `gk host-resume`
+# clears the hold and dispatch flows again.
+LIVENESS_DRIVER = r"""
+import base64, importlib.util, io, json, os, types
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
+spec = importlib.util.spec_from_file_location("gk_under_test",
+                                              os.path.join(BASE_DIR, "gk.py"))
+gk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gk)
+
+def iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+now = datetime.now(timezone.utc)
+hb_payload = {"ts": iso(now), "host": "TESTHOST", "stopped": False}
+def fake_gh_json(args, timeout=120):
+    blob = base64.b64encode(json.dumps(hb_payload).encode()).decode()
+    return {"content": blob}, None
+gk.gh_json = fake_gh_json
+
+out = {}
+gk.sweep_liveness(gk.load_jobs())
+out["fresh"] = gk.host_status_lines()
+hb_payload["ts"] = iso(now - timedelta(hours=2))
+gk.sweep_liveness(gk.load_jobs())
+out["stale"] = gk.host_status_lines()
+
+def run_outbox():
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        gk.cmd_outbox(types.SimpleNamespace(ack=False))
+    return buf.getvalue()
+out["outbox_init"] = run_outbox()
+
+GD_TS = "2026-10-31T20:00:00Z"
+record = {"host": "desktop", "ts": GD_TS, "trigger": "shutdown",
+          "active_run_ids": [777],
+          "supervised": [{"id": "camp1", "checkpoint": "ckpt://camp1/42"}],
+          "uncheckpointed": ["camp2"]}
+res = gk.ingest_going_down(record)
+out["ingest_ret"] = None if res is None else {
+    k: res[k] for k in ("host", "ts", "trigger")}
+out["affected_ids"] = sorted(j["id"] for j in (res or {}).get("affected", []))
+jobs = {j["id"]: j for j in gk.load_jobs()}
+out["j1_annotation"] = {k: jobs["j1"].get(k) for k in (
+    "interrupted_by", "interrupted_at", "interrupted_host")}
+out["j2_annotation"] = {k: jobs["j2"].get(k) for k in (
+    "interrupted_by", "interrupted_at")}
+with open(gk.HOSTS_FILE) as f:
+    out["state_held"] = json.load(f)["desktop"]
+out["held_lines"] = [ln for ln in gk.host_status_lines() if "HELD" in ln]
+
+def ledger_events():
+    evs = []
+    if os.path.isfile(gk.LEDGER):
+        with open(gk.LEDGER) as f:
+            evs = [json.loads(ln) for ln in f if ln.strip()]
+    return evs
+evs = ledger_events()
+out["gd_events"] = [{k: e.get(k) for k in (
+    "event", "host", "ts", "trigger", "active_runs", "affected_jobs",
+    "supervised", "uncheckpointed")}
+    for e in evs if e["event"] == "host_going_down"]
+out["interrupted_events"] = [{k: e.get(k) for k in (
+    "event", "job_id", "run_id", "host", "ts", "trigger")}
+    for e in evs if e["event"] == "interrupted"]
+out["outbox_1"] = run_outbox()
+out["outbox_2"] = run_outbox()
+
+res2 = gk.ingest_going_down(record)
+out["ingest2_ret_none"] = res2 is None
+evs = ledger_events()
+out["gd_events_after_dup"] = len(
+    [e for e in evs if e["event"] == "host_going_down"])
+out["interrupted_after_dup"] = len(
+    [e for e in evs if e["event"] == "interrupted"])
+out["outbox_3"] = run_outbox()
+
+decided = []
+gk.dispatch_one = lambda job, jobs: (decided.append(job["id"]), True)[1]
+gk.dispatch_pass(gk.load_jobs(), {})
+out["decided_held"] = list(decided)
+buf = io.StringIO()
+with redirect_stdout(buf):
+    gk.cmd_host_resume(types.SimpleNamespace(host="desktop"))
+out["resume_out"] = buf.getvalue().strip()
+decided.clear()
+gk.dispatch_pass(gk.load_jobs(), {})
+out["decided_after_resume"] = list(decided)
+print(json.dumps(out, sort_keys=True, default=str))
+"""
+
+d = tempfile.mkdtemp(prefix="gk-liveness-")
+try:
+    shutil.copy(os.path.join(HERE, "gk.py"), d)
+    shutil.copy(os.path.join(HERE, "config.py"), d)
+    os.mkdir(os.path.join(d, "queue"))
+    j1 = job("j1", "quick", "dispatched", 1, sha="J1S",
+             run_status="in_progress")
+    j1["run_id"] = 777
+    j1["notify_chat"] = "chat-x"
+    j2 = job("j2", "normal", "submitted", 2, sha="J2S")
+    j2["notify_chat"] = "chat-x"
+    for j in (j1, j2):
+        with open(os.path.join(d, "queue", j["id"] + ".json"), "w") as f:
+            json.dump(j, f)
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("SYNCYARD_CONFIG", "SYNCARD_CONFIG")}
+    driver = "BASE_DIR = %r\n%s" % (d, LIVENESS_DRIVER)
+    r = subprocess.run([sys.executable, "-c", driver],
+                       capture_output=True, text=True, env=env, cwd=d)
+    if r.returncode != 0:
+        raise RuntimeError("liveness driver failed: " + r.stderr[-800:])
+    res = json.loads(r.stdout.strip().splitlines()[-1])
+    check("liveness: fresh heartbeat renders both hosts UP",
+          len(res["fresh"]) == 2
+          and all(": UP" in ln for ln in res["fresh"]),
+          str(res["fresh"]))
+    check("liveness: heartbeat past threshold renders DOWN",
+          len(res["stale"]) == 2
+          and all(": DOWN" in ln for ln in res["stale"]),
+          str(res["stale"]))
+    check("going-down: ingest summary",
+          res["ingest_ret"] == {"host": "desktop",
+                                "ts": "2026-10-31T20:00:00Z",
+                                "trigger": "shutdown"}
+          and res["affected_ids"] == ["j1"],
+          str(res["ingest_ret"]) + " " + str(res["affected_ids"]))
+    check("going-down: named job annotated, unnamed untouched",
+          res["j1_annotation"] == {
+              "interrupted_by": "host-shutdown",
+              "interrupted_at": "2026-10-31T20:00:00Z",
+              "interrupted_host": "desktop"}
+          and res["j2_annotation"] == {"interrupted_by": None,
+                                       "interrupted_at": None},
+          str(res["j1_annotation"]) + " " + str(res["j2_annotation"]))
+    check("going-down: ledger lines pinned",
+          res["gd_events"] == [{
+              "event": "host_going_down", "host": "desktop",
+              "ts": "2026-10-31T20:00:00Z", "trigger": "shutdown",
+              "active_runs": 1, "affected_jobs": 1, "supervised": 1,
+              "uncheckpointed": 1}]
+          and res["interrupted_events"] == [{
+              "event": "interrupted", "job_id": "j1", "run_id": 777,
+              "host": "desktop", "ts": "2026-10-31T20:00:00Z",
+              "trigger": "shutdown"}],
+          str(res["gd_events"]) + " " + str(res["interrupted_events"]))
+    check("going-down: hold recorded in liveness state",
+          res["state_held"]["hold"] is True
+          and res["state_held"]["hold_since"] == "2026-10-31T20:00:00Z"
+          and res["state_held"]["going_down"]["trigger"] == "shutdown"
+          and res["state_held"]["going_down"]["supervised"] == [
+              {"id": "camp1", "checkpoint": "ckpt://camp1/42"}],
+          str(res["state_held"]))
+    check("going-down: status shows the hold",
+          len(res["held_lines"]) == 1
+          and "dispatch HELD since 2026-10-31T20:00:00Z"
+          in res["held_lines"][0],
+          str(res["held_lines"]))
+    expected_outbox = (
+        "NOTIFY chat-x\n"
+        "  [golden] j1 INTERRUPTED run 777 — host desktop going "
+        "down at 2026-10-31T20:00:00Z (trigger=shutdown)\n")
+    check("going-down: exactly one outbox group, stable on re-read",
+          res["outbox_1"] == expected_outbox
+          and res["outbox_2"] == expected_outbox
+          and res["outbox_3"] == expected_outbox,
+          repr(res["outbox_1"]))
+    check("going-down: duplicate ingest is a no-op",
+          res["ingest2_ret_none"] is True
+          and res["gd_events_after_dup"] == 1
+          and res["interrupted_after_dup"] == 1,
+          str(res["ingest2_ret_none"]))
+    check("going-down: dispatch held, then flows after host-resume",
+          res["decided_held"] == []
+          and res["decided_after_resume"] == ["j2"]
+          and res["resume_out"].startswith(
+              "host desktop: dispatch hold cleared"),
+          str(res["decided_held"]) + " / "
+          + str(res["decided_after_resume"]))
 finally:
     shutil.rmtree(d, ignore_errors=True)
 
