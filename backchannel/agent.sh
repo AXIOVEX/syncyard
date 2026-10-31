@@ -10,7 +10,11 @@
 # only if its id is new (and its sha256 matches its body), write
 # channels/syncyard-dev/out.json matched by id, write heartbeat.json,
 # commit + push out.json and heartbeat.json. Sync is over the git
-# protocol only - this loop burns no GitHub REST quota.
+# protocol only - this loop burns no GitHub REST quota. Every
+# network git operation is bounded by SYNCBC_GIT_TIMEOUT_S
+# (default 120s): a stalled pull/push fails the cycle, never the
+# heartbeat (field lesson, 2026-10-31: an unbounded pull froze
+# the heartbeat for ~13 minutes).
 #
 # The agent NEVER writes gatekeeper queue records. Queue access from
 # here is read-only status unless a command explicitly directs
@@ -30,6 +34,7 @@ REPO_URL="${SYNCBC_REPO_URL:-https://github.com/tbitcs/syncyard-backchannel.git}
 CHANNEL_REL="channels/syncyard-dev"
 POLL_S="${SYNCBC_POLL_S:-60}"
 DEFAULT_TIMEOUT_S="${SYNCBC_TIMEOUT_S:-600}"
+GIT_TIMEOUT_S="${SYNCBC_GIT_TIMEOUT_S:-120}"
 TAIL_BYTES="${SYNCBC_TAIL_BYTES:-8000}"
 LOG_FILE="$BASE/agent.log"
 LAST_ID_FILE="$BASE/.last_executed_id"
@@ -97,7 +102,7 @@ run_self_test() {
     [ -w "$BASE" ] && base_ok=1
     ( printf '' >> "$LOG_FILE" ) 2>/dev/null && log_ok=1
     if [ -d "$REPO_DIR/.git" ]; then
-        git -C "$REPO_DIR" ls-remote -q origin HEAD >/dev/null 2>&1 && repo_ok=1
+        timeout "$GIT_TIMEOUT_S" git -C "$REPO_DIR" ls-remote -q origin HEAD >/dev/null 2>&1 && repo_ok=1
         [ -w "$REPO_DIR/$CHANNEL_REL" ] && channel_ok=1
     fi
     python3 - "$SELFTEST_FILE" "$git_ok" "$python_ok" "$base_ok" "$log_ok" "$repo_ok" "$channel_ok" <<'PY' 2>/dev/null || true
@@ -163,10 +168,10 @@ push_channel_files() {
         return 0
     fi
     git -C "$REPO_DIR" commit -q -m "backchannel: agent update $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$LOG_FILE" 2>&1 || return 0
-    if ! git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1; then
+    if ! timeout "$GIT_TIMEOUT_S" git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1; then
         log "push failed; will retry next cycle"
-        git -C "$REPO_DIR" pull --rebase -q >> "$LOG_FILE" 2>&1 || true
-        git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1 || log "push retry failed"
+        timeout "$GIT_TIMEOUT_S" git -C "$REPO_DIR" pull --rebase -q >> "$LOG_FILE" 2>&1 || true
+        timeout "$GIT_TIMEOUT_S" git -C "$REPO_DIR" push -q origin HEAD >> "$LOG_FILE" 2>&1 || log "push retry failed"
     fi
 }
 
@@ -175,7 +180,7 @@ ensure_repo() {
         return 0
     fi
     log "cloning $REPO_URL into $REPO_DIR"
-    git clone -q "$REPO_URL" "$REPO_DIR" >> "$LOG_FILE" 2>&1
+    timeout $((GIT_TIMEOUT_S * 2)) git clone -q "$REPO_URL" "$REPO_DIR" >> "$LOG_FILE" 2>&1
 }
 
 execute_command() {
@@ -236,7 +241,7 @@ main_loop() {
             continue
         fi
         mkdir -p "$REPO_DIR/$CHANNEL_REL"
-        git -C "$REPO_DIR" pull -q --ff-only >> "$LOG_FILE" 2>&1 || log "pull failed (continuing with local state)"
+        timeout "$GIT_TIMEOUT_S" git -C "$REPO_DIR" pull -q --ff-only >> "$LOG_FILE" 2>&1 || log "pull failed (continuing with local state)"
 
         local stopped=0
         if [ -f "$REPO_DIR/$CHANNEL_REL/STOP" ]; then

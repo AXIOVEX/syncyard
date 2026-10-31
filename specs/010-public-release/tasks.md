@@ -209,3 +209,27 @@ reconciliation around the cutover).
       absent) — diagnosis + agent update ride the fleet
       deploy of this phase. Spec 010 Phase 3 (FR-005) is
       COMPLETE in the repo.
+- [x] Field follow-up (2026-10-31): the stalled agent
+      recovered on its own after ~13 minutes — consistent
+      with an unbounded `git pull` hanging on a network
+      stall (the loop's only unbounded wait). agent.sh now
+      bounds every network git operation with
+      SYNCBC_GIT_TIMEOUT_S (default 120 s; clone 2x), so a
+      stalled sync fails one cycle instead of freezing the
+      heartbeat. The chaos battery's fixed-sleep phases were
+      hardened to polled waits after one flaky run; two
+      consecutive full passes followed.
+- [x] Diagnosis addendum (2026-10-31, bc-diag job
+      20261031T111446Z-bc-diag-20261031-0f809b): the desktop
+      agent.log shows the agent RESTARTING roughly every
+      600 s all morning (starts 10:05:56Z through 11:19:11Z,
+      two interleaved cadences) — so the unbounded-pull
+      reading above is at most part of the story: the stall
+      window holds two starts (11:05:57Z, 11:15:57Z) yet the
+      remote heartbeat only moved at the 11:19:11Z start.
+      Root cause stays OPEN until the Phase 3 deploy job
+      captures the systemd journal, the unit's restart count,
+      and the linger state. The chaos battery's restart phase
+      was also hardened (it waited on a stale heartbeat ts and
+      raced the restarted agent — the PR #26 CI flake); three
+      consecutive local passes, 18 checks.
