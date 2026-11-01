@@ -22,6 +22,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   before any signal, backchannel route first, honest
   unreachable report otherwise). Implementation follows in
   Phase 5 as amended (T011–T014, T021, T022).
+- Spec 011 T021 (2026-11-01): `gk reboot --host <host>
+  [--force] [--delay <seconds>] [--requested-by <chat-id>]`
+  (FR-015) implemented in the gatekeeper. Route determination
+  is reads-only and first: a fresh backchannel heartbeat
+  (<= 300 s) routes via the backchannel agent, else any
+  online runner of the host routes via a maintenance
+  dispatch, else the host is reported unreachable (exit 4)
+  and nothing else is written. Active jobs on the host's
+  lanes refuse the reboot by name (exit 3) unless --force.
+  On acceptance the FR-003 going-down record (trigger
+  `remote-reboot`) goes through the existing ingest —
+  annotations, dispatch hold, and outbox pushes are the
+  Phase 1 semantics — then a `host_reboot_requested` ledger
+  event names the requesting chat, and only then is the
+  host signaled with the grace delay (new config
+  `reboot.grace_s`, default 60, validated positive, fail
+  closed). The maintenance-route signal job is exempt from
+  the going-down hold it rides under; every other job on
+  the host stays held. The gatekeeper still never cancels
+  and never re-dispatches. Golden scenario 7 pins the
+  refusal, the record-before-signal order, both routes,
+  and the unreachable path; the live fire drill is T022,
+  still open.
 - Spec 011 Phase 1 (T001–T003, gatekeeper side, 2026-10-31):
   host liveness and the going-down record. New config
   `liveness.down_after_s` (default 900, validated positive,

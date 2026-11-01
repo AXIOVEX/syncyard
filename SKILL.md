@@ -91,6 +91,18 @@ $GK outbox --ack
 # and verified, clear the hold (Phase-1 stand-in for the
 # recovery handshake):
 $GK host-resume <host>
+
+# Controlled reboot (spec 011 FR-015): refuses while jobs are
+# active on the host unless --force (the polite path is the
+# drain or waiting); on acceptance the going-down record is
+# written first, then the host is signaled — via the
+# backchannel when its heartbeat is fresh, else via a
+# maintenance dispatch on an online runner — with the grace
+# delay from config `reboot.grace_s` (default 60 s). Exit 3 =
+# refused (active jobs named), 4 = host unreachable (no route
+# live; nothing else is written). The host stays held for
+# dispatch until it returns and the hold is cleared.
+$GK reboot --host <host> [--force] [--delay <seconds>] [--requested-by <chat-id>]
 ```
 
 - Every job carries a **unique `--key`**. Submitting a key that is already
@@ -459,4 +471,8 @@ as the owner account are the selected shape with per-lane
 agent joins the boot set, and new **FR-015** adds `gk
 reboot` — a controlled, drain-aware host reboot that writes
 the going-down record before it signals anything.
-Implementation follows in Phase 5 as amended.
+Implementation follows in Phase 5 as amended. **T021
+shipped (2026-11-01)**: `gk reboot` is implemented in the
+gatekeeper (refusal / backchannel / maintenance / unreachable
+pinned by golden scenario 7); the live fire drill on the
+production host is T022, still open.
