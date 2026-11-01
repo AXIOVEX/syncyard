@@ -62,8 +62,38 @@ namespace SyncyardTray
                 }
                 Application.EnableVisualStyles();
                 Application.SetCompatibleTextRenderingDefault(false);
+                // The tray is a supervisor: a fault on its own UI
+                // thread must be logged, never surfaced as the modal
+                // .NET exception dialog. (2026-11-01 field crash: the
+                // default dialog's own construction faulted and the
+                // tray died with it.) CatchException + this handler
+                // keeps the process alive and the incident in the log.
+                Application.SetUnhandledExceptionMode(
+                    UnhandledExceptionMode.CatchException);
+                Application.ThreadException +=
+                    delegate(object sender, ThreadExceptionEventArgs e)
+                    {
+                        ProgramLog("unhandled UI exception (caught): " +
+                            e.Exception);
+                    };
                 Application.Run(new TrayApp());
             }
+        }
+
+        private static void ProgramLog(string msg)
+        {
+            try
+            {
+                string dir = Path.Combine(
+                    Environment.GetFolderPath(
+                        Environment.SpecialFolder.LocalApplicationData),
+                    "SyncyardTray");
+                Directory.CreateDirectory(dir);
+                File.AppendAllText(Path.Combine(dir, "tray.log"),
+                    DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") +
+                    "  " + msg + Environment.NewLine);
+            }
+            catch { }
         }
     }
 
@@ -76,12 +106,17 @@ namespace SyncyardTray
         [DllImport("user32.dll")]
         private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
 
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
+
         private readonly NotifyIcon _icon;
         private readonly System.Windows.Forms.Timer _timer;
         private readonly List<RunnerDef> _runners = new List<RunnerDef>();
         private readonly string _logPath;
         private readonly Image _logoImage;
         private Icon _currentIcon;
+        private int _iconState = -1;
+        private ContextMenuStrip _menu;
         private int _tick;
 
         public TrayApp()
@@ -146,6 +181,14 @@ namespace SyncyardTray
         // --- supervision ------------------------------------------------
 
         private void OnTick(object sender, EventArgs e)
+        {
+            // A supervision hiccup must never surface as the modal
+            // .NET exception dialog or kill the tray: log and ride on.
+            try { TickCore(); }
+            catch (Exception ex) { Log("tick error (caught): " + ex); }
+        }
+
+        private void TickCore()
         {
             _tick++;
             bool wasFaulted = AnyFaulted();
@@ -400,7 +443,10 @@ namespace SyncyardTray
                 Application.Exit();
             };
             menu.Items.Add(exit);
+            var oldMenu = _menu;
+            _menu = menu;
             _icon.ContextMenuStrip = menu;
+            if (oldMenu != null) oldMenu.Dispose();
 
             int iconState = AnyFaulted() || running == 0 ? 2
                           : running == _runners.Count ? 0 : 1;
@@ -417,6 +463,15 @@ namespace SyncyardTray
         // should-never-happen path.
         private void SetIcon(int state)
         {
+            // Render only on a state change. The 2026-11-01 field
+            // build re-rendered on every 5 s tick and leaked the
+            // bitmap and the icon handle each time (neither was
+            // released), exhausting the process GDI quota in about
+            // 10.5 h; the tray then died with a System.Drawing
+            // OutOfMemoryException raised while it was building its
+            // own error dialog. Renders are now rare AND tight.
+            if (state == _iconState && _currentIcon != null) return;
+            _iconState = state;
             var bmp = new Bitmap(32, 32);
             using (var g = Graphics.FromImage(bmp))
             {
@@ -473,10 +528,27 @@ namespace SyncyardTray
                         g.FillEllipse(b, 1, 1, 30, 30);
                 }
             }
+            IntPtr hIcon = bmp.GetHicon();
+            Icon fresh;
+            try
+            {
+                // Icon.FromHandle does NOT own the handle: disposing
+                // a FromHandle icon releases nothing, so the old code
+                // leaked one HICON per render. Clone instead (the
+                // clone owns its own handle) and destroy the borrowed
+                // original immediately.
+                using (var borrowed = Icon.FromHandle(hIcon))
+                    fresh = (Icon)borrowed.Clone();
+            }
+            finally
+            {
+                DestroyIcon(hIcon);
+            }
             var old = _currentIcon;
-            _currentIcon = Icon.FromHandle(bmp.GetHicon());
+            _currentIcon = fresh;
             _icon.Icon = _currentIcon;
             if (old != null) old.Dispose();
+            bmp.Dispose();
         }
 
         private void Log(string msg)
