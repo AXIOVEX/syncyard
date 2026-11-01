@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+- Tray GDI handle leak (field crash, 2026-11-01): the tray
+  re-rendered its status icon on every 5 s supervision tick and
+  leaked the rendered bitmap and the icon handle each time (the
+  bitmap was never disposed, and `Icon.FromHandle` handles are not
+  released by `Dispose`). After about 10.5 h (roughly 7,500 ticks,
+  15,000 handles against the 10,000 per-process GDI quota) the tray
+  died with a `System.Drawing` `OutOfMemoryException` raised while
+  it was constructing its own error dialog. The icon now renders
+  only on a state change, the bitmap is disposed, the borrowed
+  HICON is cloned and destroyed, the replaced context menu is
+  disposed, supervision ticks run under a catch-and-log guard, and
+  UI-thread exceptions are caught and logged instead of surfacing
+  the modal .NET dialog. A static source battery
+  (`runner/tray/test_tray_source.py`, wired into CI) pins the
+  patterns. Spec 007.
+
 ### Added
 - Spec 011 Amendment 1 (2026-10-31): owner ruling on boot
   autonomy. The FR-009 owner gate is satisfied by directive —

@@ -34,6 +34,9 @@ jobs:
       - name: POSIX transport smoke battery
         run: python3 runner/test_transport_smoke.py
 
+      - name: Tray source battery (GDI leak guards, spec 007)
+        run: python3 runner/tray/test_tray_source.py
+
       - name: Backchannel batteries (unit + chaos)
         run: |
           (cd backchannel && python3 test_bc.py)
