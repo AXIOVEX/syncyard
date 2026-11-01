@@ -13,6 +13,15 @@ channel repo and subjects it to the failure cases:
   7. kill -9 + restart: heartbeat resumes, the last executed
      id is NOT replayed (the replay guard survives), and a
      fresh id executes
+  8. a multi-line body ending in a newline (the `bc.py send
+     --file` shape) executes byte-exactly (issue #36)
+  9. output larger than the stored tail: the record carries
+     exactly the last TAIL_BYTES, honestly a tail
+ 10. exit-code honesty: a body's own exit status, death by
+     signal, cooperative timeout, and a TERM-ignoring body
+     the wrapper must still bound (issue #36)
+ 11. a genuinely mismatched sha256 is still refused (exit
+     65, nothing executed) and the loop carries on
 
 Everything lives in a temp dir; the agent is pointed at it via
 SYNCBC_BASE / SYNCBC_REPO_URL / SYNCBC_POLL_S=1. Stdlib only.
@@ -28,6 +37,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from datetime import datetime, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 AGENT = os.path.join(HERE, "agent.sh")
@@ -137,10 +147,12 @@ class Rig:
                     env=self.env)
         assert r.returncode == 0, "driver push failed: " + r.stderr
 
-    def push_cmd(self, cid, body):
+    def push_cmd(self, cid, body, timeout_s=None):
         doc = {"id": cid, "body": body,
                "sha256": hashlib.sha256(body.encode()).hexdigest(),
                "created_at": "2026-10-31T00:00:00Z"}
+        if timeout_s is not None:
+            doc["timeout_s"] = timeout_s
         self.push({CHANNEL + "/cmd.json": json.dumps(doc, indent=1)})
 
     # -- agent process ---------------------------------------------------
@@ -273,6 +285,128 @@ def main():
                        and rig.read_chan_json("out.json"), 45, "chaos-4 out")
         check("restart: fresh id executes",
               out is not None and "CHAOS_FOUR" in (out.get("stdout_tail") or ""))
+
+        # 8: multi-line body ending in a newline — the shape of
+        # every `bc.py send --file` (issue #36). The body reports
+        # the byte count of the script file it runs as, so the
+        # check pins byte-exact delivery, not just execution.
+        ml_body = ("echo CHAOS_ML_ONE\n"
+                   "echo \"CHAOS_BODY_BYTES $(wc -c < \"$0\")\"\n"
+                   "echo CHAOS_ML_TWO\n")
+        rig.push_cmd("chaos-5", ml_body)
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-5"
+                       and rig.read_chan_json("out.json"), 45, "chaos-5 out")
+        ml_out = (out or {}).get("stdout_tail") or ""
+        check("multiline: trailing-newline body executes (not sha-refused)",
+              out is not None and out.get("exit_code") == 0
+              and "CHAOS_ML_ONE" in ml_out and "CHAOS_ML_TWO" in ml_out,
+              f"out={out}")
+        check("multiline: executed bytes are the body's exact bytes",
+              f"CHAOS_BODY_BYTES {len(ml_body.encode())}" in ml_out,
+              f"stdout={ml_out!r}")
+
+        # 9: output larger than the stored tail. The record must
+        # carry exactly the LAST TAIL_BYTES of the full output —
+        # a tail, honestly: the end marker present, the start
+        # marker gone, byte-for-byte the known suffix. The body
+        # is a single line without a trailing newline so this
+        # case pins write_out's tail semantics alone, separate
+        # from the case-8 delivery fix.
+        tail_bytes = 8000  # agent default SYNCBC_TAIL_BYTES
+        big_lines = "".join(f"LINE {i} " + "A" * 44 + "\n"
+                            for i in range(1, 401))
+        big_full = "CHAOS_BIG_START\n" + big_lines + "CHAOS_BIG_END\n"
+        big_body = ("printf 'CHAOS_BIG_START\\n'; i=1; "
+                    "while [ $i -le 400 ]; do "
+                    "printf 'LINE %d " + "A" * 44 + "\\n' $i; "
+                    "i=$((i+1)); done; "
+                    "printf 'CHAOS_BIG_END\\n'")
+        assert len(big_full.encode()) > tail_bytes
+        rig.push_cmd("chaos-6", big_body)
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-6"
+                       and rig.read_chan_json("out.json"), 60, "chaos-6 out")
+        stored = (out or {}).get("stdout_tail") or ""
+        expect_tail = big_full.encode()[-tail_bytes:].decode()
+        check("bigtail: exit code honest (0)",
+              out is not None and out.get("exit_code") == 0)
+        check("bigtail: stored stdout is exactly the last TAIL_BYTES",
+              stored == expect_tail,
+              f"stored {len(stored.encode())}B vs expected "
+              f"{len(expect_tail.encode())}B")
+        check("bigtail: tail semantics visible (end kept, start gone)",
+              stored.endswith("CHAOS_BIG_END\n")
+              and "CHAOS_BIG_START" not in stored)
+
+        # 10: exit-code honesty (issue #36). Single-line bodies
+        # without a trailing newline, so these pin the execution
+        # wrapper only, independent of the case-8 fix.
+        rig.push_cmd("chaos-7", "echo CHAOS_EXIT_THREE; exit 3")
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-7"
+                       and rig.read_chan_json("out.json"), 45, "chaos-7 out")
+        check("exitcode: body's own status recorded (3)",
+              out is not None and out.get("exit_code") == 3
+              and "CHAOS_EXIT_THREE" in (out.get("stdout_tail") or ""),
+              f"out={out}")
+
+        rig.push_cmd("chaos-8", "kill -9 $$")
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-8"
+                       and rig.read_chan_json("out.json"), 45, "chaos-8 out")
+        check("exitcode: death by SIGKILL recorded (137, never 0)",
+              out is not None and out.get("exit_code") == 137,
+              f"out={out}")
+
+        rig.push_cmd("chaos-9", "sleep 60", timeout_s=3)
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-9"
+                       and rig.read_chan_json("out.json"), 60, "chaos-9 out")
+        check("exitcode: cooperative timeout recorded (124, never 0)",
+              out is not None and out.get("exit_code") == 124,
+              f"out={out}")
+
+        # A body that ignores SIGTERM must still be bounded by
+        # the wrapper (escalation), not run out its natural life
+        # while the single-threaded agent — and its heartbeat —
+        # stalls behind it.
+        rig.push_cmd("chaos-10",
+                     "trap '' TERM; echo CHAOS_STUBBORN_START; "
+                     "sleep 60; echo CHAOS_STUBBORN_END",
+                     timeout_s=3)
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-10"
+                       and rig.read_chan_json("out.json"), 120, "chaos-10 out")
+        span = None
+        if out and out.get("started_at") and out.get("finished_at"):
+            fmt = "%Y-%m-%dT%H:%M:%SZ"
+            span = (datetime.strptime(out["finished_at"], fmt)
+                    - datetime.strptime(out["started_at"], fmt)).total_seconds()
+        stub_out = (out or {}).get("stdout_tail") or ""
+        check("exitcode: TERM-ignoring body bounded by the wrapper",
+              out is not None and out.get("exit_code") not in (0, None)
+              and "CHAOS_STUBBORN_START" in stub_out
+              and "CHAOS_STUBBORN_END" not in stub_out
+              and span is not None and span <= 25,
+              f"out={out} span={span}")
+
+        # 11: the sha refusal is a security property and must
+        # survive the byte-exact fix: a body whose claimed
+        # sha256 belongs to a DIFFERENT body is refused with
+        # exit 65 and never executes; the next honest command
+        # still runs.
+        doc = {"id": "chaos-11", "body": "echo CHAOS_TAMPERED",
+               "sha256": hashlib.sha256(b"some other body").hexdigest(),
+               "created_at": "2026-10-31T00:00:00Z"}
+        rig.push({CHANNEL + "/cmd.json": json.dumps(doc, indent=1)})
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-11"
+                       and rig.read_chan_json("out.json"), 45, "chaos-11 out")
+        check("refusal: genuine sha mismatch refused (exit 65)",
+              out is not None and out.get("exit_code") == 65
+              and "CHAOS_TAMPERED" not in (out.get("stdout_tail") or "")
+              and "SHA MISMATCH id=chaos-11" in rig.agent_log_text(),
+              f"out={out}")
+        rig.push_cmd("chaos-12", "echo CHAOS_AFTER_REFUSAL")
+        out = wait_for(lambda: (rig.read_chan_json("out.json") or {}).get("id") == "chaos-12"
+                       and rig.read_chan_json("out.json"), 45, "chaos-12 out")
+        check("refusal: loop unharmed, next command executes",
+              out is not None and out.get("exit_code") == 0
+              and "CHAOS_AFTER_REFUSAL" in (out.get("stdout_tail") or ""))
     finally:
         rig.cleanup()
 

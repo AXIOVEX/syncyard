@@ -68,6 +68,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   shape). Prepared only; not sent — the owner's explicit
   word is required before it leaves the repo.
 
+### Fixed
+- Backchannel agent body handling (issue #36, 2026-11-01):
+  the agent extracted the command body through a bash command
+  substitution, which strips trailing newlines — so it hashed
+  and executed different bytes than the ones `bc.py` signed,
+  and **every `send --file` of an ordinary file** (which ends
+  in a newline) was sha-refused with exit 65 (field case: a
+  2,767-byte script, claimed `1e7ba777…`, agent computed the
+  hash of the same bytes minus the final newline). The agent
+  now extracts the body byte-exactly to the command file with
+  Python, hashes that file, and executes that file; the wire
+  format, envelope schema, STOP and idempotence semantics are
+  unchanged, and the mismatch refusal (exit 65) is preserved —
+  it now fires only on genuine mismatches. The scalar
+  `json_get` fields (id, sha256, timeout_s) were verified
+  unaffected: their values never end in a newline.
+- Backchannel execution bound (issue #36, 2026-11-01): the
+  execution wrapper ran plain `timeout`, whose SIGTERM does
+  not bound a body that traps or ignores it — measured on a
+  TERM-ignoring `sleep 60` under `timeout_s=3`: the body ran
+  its full 60 s, stalling the single-threaded agent (and its
+  heartbeat) behind it. The wrapper now runs
+  `timeout --kill-after=$SYNCBC_KILL_AFTER_S` (default 10 s):
+  a stubborn body is SIGKILLed after its grace and recorded
+  as 137 instead of running unbounded; cooperative timeouts
+  still record 124, and a body's own status or signal death
+  propagates unchanged — a wrapper-killed body is never
+  recorded as 0. Same battery pass also pinned what was
+  already honest: the stored `stdout_tail` is byte-for-byte
+  the last `SYNCBC_TAIL_BYTES` (8000) of the full output — a
+  tail window by design, not evidence a body died early. The
+  field diagnostics that stopped mid-script around a
+  `docker.exe` interop call (2026-11-01) could not be
+  reproduced off the WSL host or pinned to a wrapper line;
+  the record keeps the narrowing above and claims no more.
+- `backchannel/test_chaos.py` gains four cases: a multi-line
+  body ending in a newline executing with byte-exact fidelity
+  (fails pre-fix with the field's exit 65), an oversized-output
+  tail-semantics case, exit-code pins (own status 3, SIGKILL
+  137, cooperative timeout 124, TERM-ignoring body bounded),
+  and a genuine-mismatch refusal case proving the security
+  property survived the fix.
+
 ## [0.3.0] - 2026-10-31
 ### Added
 - Spec 010 Phase 5 docs (T017 + T018, 2026-10-31):

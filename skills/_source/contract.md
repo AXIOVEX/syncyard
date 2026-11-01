@@ -250,10 +250,17 @@ or blocked. It is deliberately narrow:
   service under the owner's WSL/Linux user, independent of the
   runners, tray, and gatekeeper. It syncs over git (no REST quota),
   executes only a command whose id is new and whose sha256 matches
-  its body, writes `out.json` matched by id, and heartbeats every
+  its body's exact bytes (verified and run from a file, never a
+  shell variable — so multi-line `send --file` bodies execute, and
+  only genuine mismatches are refused), writes `out.json` matched
+  by id, and heartbeats every
   poll cycle (~60 s). A `channels/syncyard-dev/STOP` file halts
   execution while the heartbeat continues. It never writes
-  gatekeeper queue records.
+  gatekeeper queue records. Execution is bounded by the
+  envelope's `timeout_s` plus a SIGKILL escalation for bodies
+  that ignore SIGTERM, and `out.json` records the body's real
+  exit status (65 = agent sha refusal, 124/137 = wrapper
+  timeout kill).
 - **Client**: `backchannel/bc.py heartbeat|status|send|wait`
   (Python stdlib only). `send` refuses to overwrite an
   unacknowledged pending command unless `--force`, stamps a unique
