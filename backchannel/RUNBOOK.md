@@ -113,6 +113,23 @@ powershell.exe -NoProfile -Command "
   re-send with a FRESH id; ids are never reused), and confirm
   the id differs from `last_executed_id` in the heartbeat (a
   replayed id is refused by design).
+- **Reading an `out.json` `exit_code`** — the code is the
+  executed body's real exit status. Special values: **65** =
+  the agent refused the command (sha256 mismatch — the body
+  never ran); **124** = the wrapper's timeout fired and the
+  body died on SIGTERM; **137** = death by SIGKILL — the
+  body's own, or the wrapper's escalation (a body that
+  ignores SIGTERM is killed `SYNCBC_KILL_AFTER_S`, default
+  10, seconds after its `timeout_s` expires); **143** = death
+  by a SIGTERM the body sent or received itself. A
+  wrapper-killed body is never recorded as 0.
+- **A short stored output is not proof a body died early** —
+  `stdout_tail` / `stderr_tail` hold only the **last 8000
+  bytes** of each stream by design: a tail window. If a
+  result looks cut off, first check whether the full output
+  was simply larger than the window; confirm completion from
+  the body's side effects and the agent log's `finished`
+  line, not from the tail's length.
 - **Corrupt cmd.json** — harmless by design (the agent skips
   it and keeps heartbeating); overwrite it with a fresh send.
 - **Reinstall** — from a checkout of AXIOVEX/syncyard, run

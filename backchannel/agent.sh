@@ -14,7 +14,11 @@
 # network git operation is bounded by SYNCBC_GIT_TIMEOUT_S
 # (default 120s): a stalled pull/push fails the cycle, never the
 # heartbeat (field lesson, 2026-10-31: an unbounded pull froze
-# the heartbeat for ~13 minutes).
+# the heartbeat for ~13 minutes). Command execution is likewise
+# bounded: timeout_s from the envelope plus a SIGKILL escalation
+# SYNCBC_KILL_AFTER_S (default 10s) for bodies that ignore
+# SIGTERM, and the body is verified and executed byte-exactly
+# from a file, never through a shell variable (issue #36).
 #
 # The agent NEVER writes gatekeeper queue records. Queue access from
 # here is read-only status unless a command explicitly directs
@@ -34,6 +38,7 @@ REPO_URL="${SYNCBC_REPO_URL:-https://github.com/tbitcs/syncyard-backchannel.git}
 CHANNEL_REL="channels/syncyard-dev"
 POLL_S="${SYNCBC_POLL_S:-60}"
 DEFAULT_TIMEOUT_S="${SYNCBC_TIMEOUT_S:-600}"
+KILL_AFTER_S="${SYNCBC_KILL_AFTER_S:-10}"
 GIT_TIMEOUT_S="${SYNCBC_GIT_TIMEOUT_S:-120}"
 TAIL_BYTES="${SYNCBC_TAIL_BYTES:-8000}"
 LOG_FILE="$BASE/agent.log"
@@ -186,26 +191,46 @@ ensure_repo() {
 execute_command() {
     # execute_command <cmd.json path>
     local cmd_file="$1"
-    local cid body claimed_sha timeout_s started rc
+    local cid claimed_sha timeout_s started rc
     cid="$(json_get "$cmd_file" id)"
     claimed_sha="$(json_get "$cmd_file" sha256)"
     timeout_s="$(json_get "$cmd_file" timeout_s)"
     [ -z "$timeout_s" ] && timeout_s="$DEFAULT_TIMEOUT_S"
     case "$timeout_s" in *[!0-9]*) timeout_s="$DEFAULT_TIMEOUT_S" ;; esac
 
-    body="$(python3 - "$cmd_file" <<'PY' 2>/dev/null
+    # Extract the body byte-exactly to the command file. The body
+    # must never pass through a bash variable or $(...): command
+    # substitution strips trailing newlines, so the agent hashed
+    # (and ran) different bytes than the ones bc.py signed -
+    # every `send --file` of an ordinary file, which ends in a
+    # newline, was sha-refused (issue #36). Python writes the
+    # exact UTF-8 bytes; the sha256 and the execution below both
+    # work on that file. The other json_get fields (id, sha256,
+    # timeout_s) are scalars whose values never end in a newline,
+    # so the print/$(...) round-trip is exact for them.
+    local body_file="$BASE/.current-command.sh"
+    if ! python3 - "$cmd_file" "$body_file" <<'PY' 2>/dev/null
 import json, sys
 with open(sys.argv[1], encoding="utf-8") as fh:
-    print(json.load(fh).get("body", ""), end="")
+    body = json.load(fh).get("body", "")
+data = body.encode("utf-8") if isinstance(body, str) else b""
+with open(sys.argv[2], "wb") as fh:
+    fh.write(data)
+sys.exit(0 if data else 1)
 PY
-)"
-    if [ -z "$cid" ] || [ -z "$body" ]; then
+    then
         log "cmd.json unreadable or empty body; skipping"
+        rm -f "$body_file"
+        return 0
+    fi
+    if [ -z "$cid" ]; then
+        log "cmd.json unreadable or empty id; skipping"
+        rm -f "$body_file"
         return 0
     fi
 
     local actual_sha
-    actual_sha="$(printf '%s' "$body" | sha256sum | awk '{print $1}')"
+    actual_sha="$(sha256sum "$body_file" | awk '{print $1}')"
     started="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     local out_tmp err_tmp
     out_tmp="$(mktemp)"; err_tmp="$(mktemp)"
@@ -215,18 +240,25 @@ PY
         printf 'backchannel: sha256 mismatch, command not executed\n' > "$err_tmp"
         write_out "$cid" 65 "$started" "$out_tmp" "$err_tmp"
         printf '%s' "$cid" > "$LAST_ID_FILE"
-        rm -f "$out_tmp" "$err_tmp"
+        rm -f "$out_tmp" "$err_tmp" "$body_file"
         return 0
     fi
 
     log "executing id=$cid timeout_s=$timeout_s sha256=$actual_sha"
-    printf '%s' "$body" > "$BASE/.current-command.sh"
-    timeout "$timeout_s" bash "$BASE/.current-command.sh" > "$out_tmp" 2> "$err_tmp"
+    # --kill-after bounds a body that ignores SIGTERM: plain
+    # timeout sends TERM and then waits for the body to die, and
+    # a trapping body defers TERM until its current child exits
+    # (measured: a TERM-ignoring `sleep 60` under timeout_s=3
+    # ran its full 60s, stalling this single-threaded loop and
+    # its heartbeat). After KILL_AFTER_S the wrapper escalates
+    # to SIGKILL and timeout reports 137 instead of 124; both
+    # are the wrapper's honest kill, never the body's own 0.
+    timeout --kill-after="$KILL_AFTER_S" "$timeout_s" bash "$body_file" > "$out_tmp" 2> "$err_tmp"
     rc=$?
     log "finished id=$cid exit_code=$rc"
     write_out "$cid" "$rc" "$started" "$out_tmp" "$err_tmp"
     printf '%s' "$cid" > "$LAST_ID_FILE"
-    rm -f "$out_tmp" "$err_tmp" "$BASE/.current-command.sh"
+    rm -f "$out_tmp" "$err_tmp" "$body_file"
     return 0
 }
 
