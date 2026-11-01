@@ -5,7 +5,11 @@
 **Created**: 2026-10-31
 
 **Status**: **Specified — draft for owner review. No implementation
-in this change.**
+in this change.** Phase 1 (T001–T003, gatekeeper side) has since
+been implemented and merged (2026-10-31). **Amendment 1
+(2026-10-31) resolves the FR-009 owner gate by owner directive
+and adds FR-015, controlled host reboot — see the Amendment 1
+section below.**
 This spec gives Syncyard a shutdown story it does not have
 today: when a host machine is shut down or restarted, active
 work is drained and checkpointed instead of silently killed,
@@ -29,6 +33,59 @@ administrator who insists. Every requirement below is written
 inside that envelope, and any UI, log line, or document
 produced under this spec must say so in the same words. A
 guard that claims more than this is a defect under this spec.
+
+## Amendment 1 — Owner ruling: boot autonomy and controlled reboot (2026-10-31, ~23:57 ET)
+
+**Direction (owner, 2026-10-31 ~23:57 ET)**: "Add capability
+for Syncyard to reboot the desktop and make sure Syncyard
+starts automatically on boot and does not require logging
+into user account."
+
+This amendment is a ruling, not a proposal. It lands the same
+night the failure it answers was observed in production: at
+2026-11-01T02:29Z TRISTEN-DESKTOP's runners and backchannel
+agent went silent together and stayed silent — the fleet's
+most fragile boot leg (The gap, first bullet) failing in the
+field, with jobs queued behind a host only a person at the
+keyboard could revive.
+
+- **The FR-009 owner gate (T012) is satisfied by this
+  directive.** The chosen outcome is boot-start with **no
+  interactive logon**. Shape (b), autologon + tray, is
+  excluded by the ruling's own words: it logs into the user
+  account (automatically) and leaves an unlocked console —
+  the tradeoff FR-009 said the owner must accept explicitly;
+  the owner has instead required the property (b) cannot
+  give.
+- **Implementation shape, selected under the ruling**:
+  service-mode runners (FR-009 shape (a)) **running as the
+  owner account** — Windows services with automatic start
+  whose service logon is the owner's own account, so each
+  runner process holds the owner's profile, WSL distro
+  registration, and device posture without any interactive
+  session existing. FR-009's honesty mechanism is unchanged
+  and binding: a lane whose job classes need the interactive
+  session (audio endpoints, bench devices) is labeled
+  `logon-bound` in config and renders DOWN pre-logon, never
+  online-but-wrong. The one-lane proof (T011, as amended)
+  precedes fleet conversion; if that proof shows the owner's
+  WSL distro unreachable from the service session, the
+  fallback shape is (c), a boot-scheduled launcher in the
+  owner's name, under the same labels. Adopting service-mode
+  amends spec 007 FR-003; that amendment rides with the T013
+  implementation change, as T012 requires.
+- **The backchannel agent joins the boot set.** The agent is
+  a systemd user service; the conversion enables linger for
+  its user and pulls the FR-010 step (1) distro-start ensure
+  forward, so the heartbeat resumes after a boot with no
+  logon.
+- **The tray stops being load-bearing.** Its logon autostart
+  is retired in the same conversion, so a session-0 service
+  and a session-1 tray starter never run the same runner
+  twice. Nothing else about the tray changes in this
+  amendment.
+- **FR-015 (Part D, below) is added**: a controlled,
+  drain-aware host reboot verb for the gatekeeper.
 
 ## The gap
 
@@ -441,6 +498,41 @@ proves.
   *This does not establish* adopter comprehension — docs are
   evidence of intent; the drills (FR-013) are the evidence
   of behavior.
+
+### Part D — Controlled reboot (Amendment 1)
+
+- **FR-015 — The gatekeeper can reboot a host, on request,
+  under the drain discipline.**
+  *Behavior*: `gk reboot --host <host>` requests a controlled
+  reboot of a fleet host. The gatekeeper first accounts for
+  the host's active jobs: with any active and `--force`
+  absent, it refuses and names them — the polite path is the
+  drain (FR-007) or waiting. On acceptance it writes the
+  going-down record first (FR-003, trigger `remote-reboot`),
+  ledgers a `host_reboot_requested` event naming the
+  requesting chat, notifies per FR-004, and only then signals
+  the host. Signal routes, in order: (1) the backchannel,
+  when its heartbeat is fresh — the agent issues the host
+  OS's reboot with a grace delay (default 60 s) so in-flight
+  uploads and log writes finish; (2) a maintenance dispatch
+  on any online runner of the host, issuing the same delayed
+  reboot; (3) when neither route is live, the command reports
+  the host unreachable and does nothing — an unrebootable
+  host is a stated result, never a silent success. After
+  signaling, the host is held for dispatch (FR-006) until the
+  FR-010 handshake or `gk host-resume` clears it, and its
+  return is expected to satisfy FR-009 as amended: boot-
+  runnable lanes and the backchannel heartbeat come back
+  with no logon.
+  *Acceptance*: test + oracle — the fixture batteries pin the
+  refusal with active jobs, the record-before-signal order,
+  and the route selection; one live fire on the production
+  host, counted as a drill under FR-013, observes the reboot
+  and the no-logon return.
+  *This does not establish* reachability of a powered-off,
+  hung, or network-isolated host. The verb reports that
+  honestly instead of acting, and the FR-009 boot autonomy is
+  what makes a host that *does* come back come back useful.
 
 ## Non-goals
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ### Added
+- Spec 011 Amendment 1 (2026-10-31): owner ruling on boot
+  autonomy. The FR-009 owner gate is satisfied by directive —
+  Syncyard must start automatically on boot with **no
+  interactive logon**; autologon is excluded by the ruling's
+  own words. Selected shape: service-mode runners running as
+  the owner account (the boot-scheduled launcher is the named
+  fallback if the one-lane proof fails on WSL reachability),
+  per-lane `boot-runnable` / `logon-bound` honesty labels
+  unchanged, the backchannel agent in the boot set (linger +
+  distro-start ensure), and the tray's logon autostart
+  retired in the conversion. New FR-015: `gk reboot` — a
+  controlled, drain-aware host reboot (going-down record
+  before any signal, backchannel route first, honest
+  unreachable report otherwise). Implementation follows in
+  Phase 5 as amended (T011–T014, T021, T022).
 - Spec 011 Phase 1 (T001–T003, gatekeeper side, 2026-10-31):
   host liveness and the going-down record. New config
   `liveness.down_after_s` (default 900, validated positive,

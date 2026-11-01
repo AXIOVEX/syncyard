@@ -448,5 +448,15 @@ heartbeat) into a first-class supervised-work vehicle, and
 names its tension with spec 007 FR-003 (runners are not
 Windows services) as an owner-gated evaluation, not a
 presumption. Spec text lives at
-`specs/011-shutdown-protection-recovery/`; specified only,
-no implementation yet.
+`specs/011-shutdown-protection-recovery/`; Phase 1 (host
+liveness + going-down ingest, T001–T003) shipped 2026-10-31.
+**Amendment 1 (2026-10-31)** records the owner's
+boot-autonomy ruling: Syncyard starts automatically on boot
+with no interactive logon (the FR-009 gate, answered by
+directive; autologon excluded), service-mode runners running
+as the owner account are the selected shape with per-lane
+`boot-runnable` / `logon-bound` labels, the backchannel
+agent joins the boot set, and new **FR-015** adds `gk
+reboot` — a controlled, drain-aware host reboot that writes
+the going-down record before it signals anything.
+Implementation follows in Phase 5 as amended.

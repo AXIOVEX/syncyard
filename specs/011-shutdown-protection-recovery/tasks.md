@@ -109,22 +109,60 @@ behavior (spec 011 FR-014).
       without a behavior change to their science.
 
 ## Phase 5 — Boot recovery (FR-009, FR-010)
-- [ ] T011 Boot-shape evaluation on a test host: service-mode
-      vs autologon+tray vs boot-scheduled launcher, measured
-      against the device-bound job classes (WSL, GPU, audio,
-      bench). Evidence pack to the owner.
-- [ ] T012 **Owner gate**: boot shape chosen from the T011
-      evidence. If service-mode is chosen for any lane, the
-      same change amends spec 007 FR-003 and SKILL.md's
+- [ ] T011 Boot-shape proof, narrowed by Amendment 1: on one
+      lane of the production host, convert the runner to a
+      Windows service running as the owner account and prove,
+      with no interactive logon present, that the lane returns
+      online and honestly runs its job classes — the WSL
+      reachability check is the decisive one. If the owner's
+      WSL distro is unreachable from the service session, the
+      evidence goes to the fallback shape (boot-scheduled
+      launcher in the owner's name) and the same proof runs
+      there. Evidence pack either way.
+- [x] T012 **Owner gate**: boot shape chosen.
+      **Satisfied by owner directive, 2026-10-31 ~23:57 ET
+      (Amendment 1)**: boot-start with no interactive logon is
+      required; autologon (shape (b)) is excluded by the
+      ruling's own words. Selected shape: service-mode
+      runners running as the owner account, with the
+      boot-scheduled launcher as the named fallback if the
+      T011 proof fails on WSL reachability. Choosing
+      service-mode amends spec 007 FR-003; that amendment
+      rides with the T013 implementation change below, as
+      this task requires, together with SKILL.md's
       Windowless Supervision section.
 - [ ] T013 Implement the chosen shape; per-lane `boot-runnable`
       vs `logon-bound` labels in config; lanes that cannot
       honestly run pre-logon render DOWN, never online.
+      Conversion scope (Amendment 1): all four runner lanes
+      to services running as the owner account; the
+      backchannel agent joins the boot set (linger for its
+      user + the T014 distro-start ensure pulled forward);
+      the tray's logon autostart is retired in the same
+      change so no runner is ever started twice.
 - [ ] T014 WSL ensure + recovery handshake sequence:
       distro start, backchannel self-test fresh, runners per
       T013, campaign relaunch per T009, handshake to the
       gatekeeper; dispatch stays held until the handshake.
       Test: a withheld handshake leaves the host DOWN.
+- [ ] T021 `gk reboot` (FR-015, Amendment 1): drain-aware
+      refusal naming active jobs, going-down record written
+      before any signal (trigger `remote-reboot`),
+      `host_reboot_requested` ledger event naming the
+      requesting chat, signal via a fresh backchannel first,
+      a maintenance dispatch second, an honest unreachable
+      report otherwise; dispatch hold after signaling.
+      Batteries pin the refusal, the order, and the route
+      selection.
+- [ ] T022 Venue conversion + no-logon boot proof on
+      TRISTEN-DESKTOP: the T013 conversion applied under
+      pause-first discipline, then one live fire of
+      `gk reboot` (T021) with **no logon afterwards** —
+      runners return per their labels, the backchannel
+      heartbeat resumes fresh, queued jobs execute in order.
+      Counted as a drill under FR-013; the evidence pack
+      (runners API state, heartbeat age, job completions)
+      lands with the change.
 
 ## Phase 6 — Reconciliation and the recovery report (FR-011, FR-012)
 - [ ] T015 Sweep reconciliation of interrupted runs: adopt
