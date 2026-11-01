@@ -120,6 +120,7 @@ for _h in _CFG["hosts"].values():
     DEFAULT_CWD.update(_h.get("cwd") or {})
 MARKER_RE = re.compile(_CFG["markers"]["pattern"])
 LIVENESS_DOWN_AFTER_S = _CFG["liveness"]["down_after_s"]
+REBOOT_GRACE_S = _CFG["reboot"]["grace_s"]
 
 # Host routing (spec 010 FR-003/FR-004): a job names a lane; the
 # lane's host is the venue. A workflow the host does not serve is
@@ -1009,12 +1010,22 @@ def dispatch_pass(jobs, runs_by_id):
     # replaces it in Phase 5). Queued jobs wait; nothing reroutes.
     held_hosts = {h for h, r in load_hosts_state().items()
                   if r.get("hold")}
+    # FR-015 route 2 exception: the gatekeeper's own reboot-signal
+    # job (a maintenance job keyed gk-reboot-*) is exempt from the
+    # host hold. The hold exists to stop NEW work starting on a
+    # host that is going down; the signal job is not new work, it
+    # IS the going-down mechanism — if the hold blocked it, the
+    # maintenance route could never deliver its own signal.
+    def _hold_exempt(job):
+        return bool(job.get("maintenance")) and str(
+            job.get("key") or "").startswith(REBOOT_KEY_PREFIX)
     lanes_live = os.path.isfile(LANES_LIVE_FILE)
     for job in waiting:
         maint = bool(job.get("maintenance"))
         if paused and not maint:
             continue  # paused: program work holds; maintenance flows
-        if LANE_HOST.get(job["lane"]) in held_hosts:
+        if LANE_HOST.get(job["lane"]) in held_hosts \
+                and not _hold_exempt(job):
             continue  # host going down: held (see status board)
         if not lanes_live and active_count >= MAX_ACTIVE_DISPATCHED \
                 and not maint:
@@ -1464,7 +1475,8 @@ def backchannel_status_line():
 # hold, which only a going-down ingest sets (FR-006) — a merely
 # stale heartbeat never blocks dispatch in this phase.
 
-GOING_DOWN_TRIGGERS = ("shutdown", "logoff", "update", "unknown")
+GOING_DOWN_TRIGGERS = ("shutdown", "logoff", "update", "unknown",
+                       "remote-reboot")
 
 
 def load_hosts_state():
@@ -1683,6 +1695,205 @@ def cmd_host_resume(args):
     return 0
 
 
+# --- Controlled reboot (spec 011 FR-015) ------------------------------------
+#
+# `gk reboot --host <host>` requests a controlled reboot of a fleet
+# host under the drain discipline. Route determination is reads-only
+# and happens FIRST; with neither route live the host is reported
+# unreachable and nothing is written but the ledger event. With
+# active jobs on the host's lanes and no --force, the command
+# refuses and names them (the polite path is `gk drain` or
+# waiting). On acceptance the going-down record goes through the
+# EXISTING ingest_going_down — annotations, dispatch hold, and
+# outbox pushes are Phase 1 semantics exactly — then the request is
+# ledgered, and only then is the host signaled:
+#   route backchannel: the backchannel agent runs the host OS's
+#     shutdown with a grace delay (the agent sits in the host's
+#     WSL2 distro, so the Windows shutdown.exe is invoked through
+#     its /mnt/c path);
+#   route maintenance: a maintenance job carrying the same delayed
+#     shutdown is submitted and the next sweep dispatches it (it
+#     is exempt from the going-down hold it rides under — see
+#     dispatch_pass).
+# Exit codes: 0 signaled (or queued to signal), 3 refused (active
+# jobs, no --force), 4 host unreachable, 1 the chosen route was
+# live but the signal itself failed, 2 usage error.
+
+REBOOT_KEY_PREFIX = "gk-reboot-"
+REBOOT_SIGNAL_TEXT = "Syncyard gatekeeper reboot"
+# A job in one of these states on one of the host's lanes makes
+# the host busy for reboot purposes.
+REBOOT_ACTIVE_STATES = ("submitted", "dispatching", "dispatched")
+
+
+def _host_lanes(host):
+    return [ln for ln in LANES if LANE_HOST.get(ln) == host]
+
+
+def _host_active_jobs(host, jobs):
+    lanes = set(_host_lanes(host))
+    return [j for j in jobs if j.get("lane") in lanes
+            and j["state"] in REBOOT_ACTIVE_STATES]
+
+
+def _reboot_route(host):
+    """Reads-only route determination. Returns (route, detail):
+    ("backchannel", heartbeat) when the backchannel heartbeat is
+    fresh (age <= BC_STALE_S) and actually proves this host;
+    ("maintenance", online_runners) when at least one runner of
+    the door repo is online; (None, None) when neither is live.
+
+    Runner names are not part of config, so the mapping is honest
+    about its limit: any online runner proves the lane-owning
+    host (the host every lane names) is up; the maintenance route
+    is viable only for that host."""
+    hb, _err = fetch_backchannel_heartbeat()
+    if hb is not None and host in heartbeat_hosts() \
+            and not hb.get("stopped"):
+        ts = parse_iso(hb.get("ts"))
+        age = (now_dt() - ts).total_seconds() if ts else None
+        if age is not None and age <= BC_STALE_S:
+            return "backchannel", hb
+    data, err = gh_json(["api", "repos/%s/actions/runners" % REPO])
+    if not err and data:
+        online = [r for r in data.get("runners") or []
+                  if r.get("status") == "online"]
+        lane_hosts = {LANE_HOST.get(ln) for ln in LANES}
+        if online and host in lane_hosts:
+            return "maintenance", online
+    return None, None
+
+
+def _bc_client_path():
+    """Locate the backchannel client (bc.py): $SYNCYARD_BC first,
+    then the repo layout (../backchannel beside gatekeeper/),
+    then the canonical project checkout."""
+    cands = []
+    if os.environ.get("SYNCYARD_BC"):
+        cands.append(os.environ["SYNCYARD_BC"])
+    cands.append(os.path.join(BASE, "..", "backchannel", "bc.py"))
+    cands.append(os.path.expanduser(
+        "~/workspace/syncyard-build/backchannel/bc.py"))
+    for c in cands:
+        if c and os.path.isfile(c):
+            return c
+    return None
+
+
+def cmd_reboot(args):
+    host = args.host
+    delay = REBOOT_GRACE_S if args.delay is None else args.delay
+    if delay < 0:
+        print("ERROR: --delay must be >= 0 seconds")
+        return 2
+    # 1. Route determination FIRST (reads only).
+    route, _detail = _reboot_route(host)
+    if route is None:
+        print("REBOOT UNREACHABLE host=%s" % host)
+        ledger("host_reboot_unreachable", host=host,
+               requested_by=args.requested_by)
+        return 4
+    # 2. Refusal: active jobs and no --force. No signal, no
+    # going-down record — the drain (FR-007) or waiting is the
+    # polite path.
+    jobs = load_jobs()
+    active = _host_active_jobs(host, jobs)
+    if active and not args.force:
+        print("REFUSED reboot: host %s has active jobs: %s"
+              % (host, ", ".join(j["id"] for j in active)))
+        ledger("host_reboot_refused", host=host,
+               requested_by=args.requested_by,
+               active_jobs=[j["id"] for j in active])
+        return 3
+    # 3. Acceptance, in pinned order: the going-down record
+    # through the existing ingest (annotations + hold + outbox),
+    # then the request ledger line, then the signal.
+    ts = now_iso()
+    record = {
+        "host": host,
+        "ts": ts,
+        "trigger": "remote-reboot",
+        "active_run_ids": [j["run_id"] for j in active
+                           if j.get("run_id")],
+        "supervised": [],
+        "uncheckpointed": [j["id"] for j in active],
+    }
+    ingest_going_down(record, jobs=jobs)
+    ledger("host_reboot_requested", host=host,
+           requested_by=args.requested_by, route=route, delay_s=delay)
+    # 4. Signal.
+    if route == "backchannel":
+        body = ("/mnt/c/Windows/System32/shutdown.exe /r /t %d "
+                "/c \"%s\"" % (delay, REBOOT_SIGNAL_TEXT))
+        bc = _bc_client_path()
+        if bc is None:
+            print("REBOOT SIGNAL FAILED host=%s route=backchannel: "
+                  "backchannel client (bc.py) not found" % host)
+            ledger("host_reboot_signal_failed", host=host, route=route,
+                   error="bc.py not found")
+            return 1
+        rc, out, err = run_cmd([sys.executable, bc, "send", "--cmd",
+                                body], timeout=120)
+        if rc != 0:
+            print("REBOOT SIGNAL FAILED host=%s route=backchannel "
+                  "rc=%d: %s" % (host, rc, (err or out or "").strip()[:300]))
+            ledger("host_reboot_signal_failed", host=host, route=route,
+                   error=("bc send rc=%d" % rc))
+            return 1
+        hlog("HOST_REBOOT host=%s route=backchannel delay_s=%s ts=%s"
+             % (host, delay, ts))
+        print("REBOOT SIGNALED host=%s route=backchannel delay_s=%s "
+              "— the going-down record is written and dispatch to "
+              "the host is held until it returns (`gk host-resume %s`)"
+              % (host, delay, host))
+        return 0
+    # Maintenance route: the signal is a normal maintenance job
+    # through the existing submit machinery; the next sweep
+    # dispatches it (hold-exempt, see dispatch_pass).
+    lanes = _host_lanes(host)
+    if not lanes:
+        print("REBOOT SIGNAL FAILED host=%s route=maintenance: "
+              "no lane is configured for this host" % host)
+        ledger("host_reboot_signal_failed", host=host, route=route,
+               error="no lane configured for host")
+        return 1
+    script_path = os.path.join(BASE, "reboot-signal-%s.ps1" % host)
+    script = ("shutdown.exe /r /t %d /c \"%s\"; exit 0\n"
+              % (delay, REBOOT_SIGNAL_TEXT))
+    try:
+        _write_text_file(script_path, script)
+    except (IOError, OSError) as exc:
+        print("REBOOT SIGNAL FAILED host=%s route=maintenance: "
+              "could not write the signal script (%s)" % (host, exc))
+        ledger("host_reboot_signal_failed", host=host, route=route,
+               error=str(exc)[:200])
+        return 1
+    import types as _types
+    sub_args = _types.SimpleNamespace(
+        key="%s%s-%s" % (REBOOT_KEY_PREFIX, host,
+                         now_dt().strftime("%Y%m%dT%H%M%SZ")),
+        program="syncyard", workflow="run.yml", lane=lanes[0],
+        script=script_path, grab_path=None, cwd=None, image=None,
+        mounts=None, expected_min=1.0, maintenance=True,
+        notify_chat=None)
+    rc = cmd_submit(sub_args)
+    if rc != 0:
+        print("REBOOT SIGNAL FAILED host=%s route=maintenance: "
+              "the signal job was not accepted (submit rc=%d)"
+              % (host, rc))
+        ledger("host_reboot_signal_failed", host=host, route=route,
+               error="submit rc=%d" % rc)
+        return 1
+    hlog("HOST_REBOOT host=%s route=maintenance delay_s=%s ts=%s"
+         % (host, delay, ts))
+    print("REBOOT SIGNAL QUEUED host=%s route=maintenance delay_s=%s "
+          "— the signal job rides the next sweep; the going-down "
+          "record is written and dispatch to the host is held "
+          "until it returns (`gk host-resume %s`)"
+          % (host, delay, host))
+    return 0
+
+
 def cmd_status(args):
     jobs = load_jobs()
     by_state = {}
@@ -1834,6 +2045,26 @@ def main(argv=None):
                             "the FR-010 recovery handshake)")
     p.add_argument("host", help="config host name, e.g. desktop")
     p.set_defaults(fn=cmd_host_resume)
+
+    p = sub.add_parser("reboot",
+                       help="request a controlled reboot of a host "
+                            "(spec 011 FR-015): refuses while jobs "
+                            "are active unless --force; writes the "
+                            "going-down record before signaling; "
+                            "exit 3 = refused, 4 = host unreachable")
+    p.add_argument("--host", required=True,
+                   help="config host name, e.g. desktop")
+    p.add_argument("--force", action="store_true",
+                   help="reboot even with active jobs on the host "
+                        "(they are annotated interrupted; nothing "
+                        "is cancelled or re-dispatched)")
+    p.add_argument("--delay", type=int, default=None,
+                   help="grace delay in seconds before the host "
+                        "goes down (default: reboot.grace_s, 60)")
+    p.add_argument("--requested-by", default=None,
+                   help="chat id requesting the reboot (recorded "
+                        "in the ledger)")
+    p.set_defaults(fn=cmd_reboot)
 
     p = sub.add_parser("status")
     p.add_argument("--repo", action="store_true",

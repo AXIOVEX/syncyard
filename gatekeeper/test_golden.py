@@ -22,6 +22,15 @@ pre-config constants:
     the per-record annotation, the dispatch hold, the single
     outbox group, duplicate-ingest suppression, and the
     `gk host-resume` stand-in clearing the hold.
+ 7. Controlled reboot (spec 011 FR-015, T021): route selection
+    (fresh backchannel / stale heartbeat + online runner /
+    neither), the active-jobs refusal (exit 3, nothing else
+    written), the record-before-signal order on the backchannel
+    route (going-down ledger line, then the request line, then
+    the captured signal argv), the --force path's annotations,
+    and the maintenance route (a maintenance job is created and
+    is exempt from the going-down hold in dispatch_pass while a
+    normal job on the same host stays held).
 
 Stdlib only. Run: python3 gatekeeper/test_golden.py
 """
@@ -516,6 +525,259 @@ try:
           + str(res["decided_after_resume"]))
 finally:
     shutil.rmtree(d, ignore_errors=True)
+
+# 7: controlled reboot (spec 011 FR-015) — five cases, each in a
+# fresh gatekeeper dir. gh is faked at the gh_json seam (heartbeat
+# contents + runners API); the backchannel client is a stub script
+# (SYNCYARD_BC) that captures its argv and appends SIGNAL to a
+# shared order file the driver's ledger wrapper also appends to,
+# pinning the true cross-process order.
+REBOOT_DRIVER = r"""
+import base64, importlib.util, io, json, os, types
+from contextlib import redirect_stdout
+from datetime import datetime, timedelta, timezone
+spec = importlib.util.spec_from_file_location("gk_under_test",
+                                              os.path.join(BASE_DIR, "gk.py"))
+gk = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(gk)
+
+def iso(dt):
+    return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+now = datetime.now(timezone.utc)
+HB_MODE = os.environ["CASE_HB"]          # fresh | stale
+RUNNERS_ONLINE = os.environ["CASE_RUNNERS"] == "online"
+FORCE = os.environ.get("CASE_FORCE") == "1"
+DELAY = os.environ.get("CASE_DELAY")
+DELAY = int(DELAY) if DELAY else None
+
+def fake_gh_json(args, timeout=120):
+    a = " ".join(args)
+    if "contents/" in a and "heartbeat.json" in a:
+        ts = iso(now) if HB_MODE == "fresh" else iso(now - timedelta(hours=2))
+        payload = {"ts": ts, "host": "TESTHOST", "stopped": False}
+        return {"content": base64.b64encode(
+            json.dumps(payload).encode()).decode()}, None
+    if "actions/runners" in a:
+        st = "online" if RUNNERS_ONLINE else "offline"
+        return {"total_count": 1, "runners": [
+            {"name": "tristen-desktop", "status": st, "busy": False}]}, None
+    return None, "unexpected gh call: " + a
+gk.gh_json = fake_gh_json
+
+ORDER_FILE = os.environ["REBOOT_ORDER_FILE"]
+_real_ledger = gk.ledger
+def rec_ledger(event, **kw):
+    with open(ORDER_FILE, "a") as f:
+        f.write(event + "\n")
+    return _real_ledger(event, **kw)
+gk.ledger = rec_ledger
+
+def ledger_events():
+    if not os.path.isfile(gk.LEDGER):
+        return []
+    with open(gk.LEDGER) as f:
+        return [json.loads(ln) for ln in f if ln.strip()]
+
+def hosts_state():
+    if not os.path.isfile(gk.HOSTS_FILE):
+        return {}
+    with open(gk.HOSTS_FILE) as f:
+        return json.load(f)
+
+def bc_capture():
+    p = os.path.join(BASE_DIR, "bc-capture.jsonl")
+    if not os.path.isfile(p):
+        return []
+    with open(p) as f:
+        return [json.loads(ln) for ln in f if ln.strip()]
+
+out = {}
+buf = io.StringIO()
+with redirect_stdout(buf):
+    rc = gk.cmd_reboot(types.SimpleNamespace(
+        host="desktop", force=FORCE, delay=DELAY,
+        requested_by="chat-test"))
+out["rc"] = rc
+out["stdout"] = buf.getvalue()
+evs = ledger_events()
+out["events"] = [e["event"] for e in evs]
+out["gd_events"] = [{k: e.get(k) for k in (
+    "event", "host", "trigger", "active_runs", "affected_jobs",
+    "uncheckpointed")} for e in evs if e["event"] == "host_going_down"]
+out["requested_events"] = [{k: e.get(k) for k in (
+    "event", "host", "requested_by", "route", "delay_s")}
+    for e in evs if e["event"] == "host_reboot_requested"]
+out["refused_events"] = [{k: e.get(k) for k in (
+    "event", "host", "requested_by", "active_jobs")}
+    for e in evs if e["event"] == "host_reboot_refused"]
+out["hold"] = (hosts_state().get("desktop") or {}).get("hold")
+with open(ORDER_FILE) as f:
+    out["order"] = [ln.strip() for ln in f if ln.strip()]
+out["capture"] = bc_capture()
+jobs = {j["id"]: j for j in gk.load_jobs()}
+out["annotations"] = {jid: {k: j.get(k) for k in (
+    "interrupted_by", "interrupted_at", "interrupted_host")}
+    for jid, j in jobs.items()}
+reboot_jobs = [j for j in jobs.values()
+               if str(j.get("key") or "").startswith("gk-reboot-")]
+out["reboot_jobs"] = [{k: j.get(k) for k in (
+    "id", "key", "program", "workflow", "lane", "state",
+    "maintenance")} for j in reboot_jobs]
+if reboot_jobs:
+    with open(reboot_jobs[0]["script_path"]) as f:
+        out["signal_script"] = f.read()
+    decided = []
+    gk.dispatch_one = lambda job, jobs: (decided.append(job["id"]), True)[1]
+    gk.dispatch_pass(gk.load_jobs(), {})
+    out["decided"] = decided
+print(json.dumps(out, sort_keys=True, default=str))
+"""
+
+BC_STUB = '''#!/usr/bin/env python3
+import json, os, sys
+with open(os.environ["REBOOT_ORDER_FILE"], "a") as f:
+    f.write("SIGNAL\\n")
+cap = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                   "bc-capture.jsonl")
+with open(cap, "a") as f:
+    f.write(json.dumps({"argv": sys.argv[1:]}) + "\\n")
+print("BC_SENT id=stub000 sha256=stub")
+'''
+
+
+def run_reboot_case(fixtures, hb, runners, force=False, delay=None):
+    d = tempfile.mkdtemp(prefix="gk-reboot-")
+    try:
+        shutil.copy(os.path.join(HERE, "gk.py"), d)
+        shutil.copy(os.path.join(HERE, "config.py"), d)
+        os.mkdir(os.path.join(d, "queue"))
+        for j in fixtures:
+            with open(os.path.join(d, "queue", j["id"] + ".json"), "w") as f:
+                json.dump(j, f)
+        stub = os.path.join(d, "bc-stub.py")
+        with open(stub, "w") as f:
+            f.write(BC_STUB)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("SYNCYARD_CONFIG", "SYNCARD_CONFIG")}
+        env["SYNCYARD_BC"] = stub
+        env["REBOOT_ORDER_FILE"] = os.path.join(d, "order.log")
+        env["CASE_HB"] = hb
+        env["CASE_RUNNERS"] = runners
+        env["CASE_FORCE"] = "1" if force else "0"
+        if delay is not None:
+            env["CASE_DELAY"] = str(delay)
+        driver = "BASE_DIR = %r\n%s" % (d, REBOOT_DRIVER)
+        r = subprocess.run([sys.executable, "-c", driver],
+                           capture_output=True, text=True, env=env, cwd=d)
+        if r.returncode != 0:
+            raise RuntimeError("reboot driver failed: " + r.stderr[-800:])
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
+BC_BODY_60 = ('/mnt/c/Windows/System32/shutdown.exe /r /t 60 '
+              '/c "Syncyard gatekeeper reboot"')
+
+# 7A: refusal — active job, fresh heartbeat, no --force.
+a1 = job("a1", "quick", "dispatched", 1, sha="A1S",
+         run_status="in_progress")
+a1["run_id"] = 555
+res = run_reboot_case([a1], "fresh", "online")
+check("reboot refusal: exit 3 + names the active job, nothing else",
+      res["rc"] == 3
+      and res["stdout"].startswith(
+          "REFUSED reboot: host desktop has active jobs: a1")
+      and res["events"] == ["host_reboot_refused"]
+      and res["refused_events"] == [{
+          "event": "host_reboot_refused", "host": "desktop",
+          "requested_by": "chat-test", "active_jobs": ["a1"]}]
+      and res["capture"] == [] and res["hold"] is None
+      and res["reboot_jobs"] == [],
+      json.dumps({k: res[k] for k in ("rc", "events", "capture", "hold")}))
+
+# 7B: backchannel acceptance, idle host — record, request, signal,
+# in that order; hold set; argv exact with the config grace (60).
+res = run_reboot_case([], "fresh", "online")
+check("reboot backchannel: exit 0, order + hold + argv pinned",
+      res["rc"] == 0
+      and res["order"] == ["host_going_down", "host_reboot_requested",
+                           "SIGNAL"]
+      and res["requested_events"] == [{
+          "event": "host_reboot_requested", "host": "desktop",
+          "requested_by": "chat-test", "route": "backchannel",
+          "delay_s": 60}]
+      and res["gd_events"] == [{
+          "event": "host_going_down", "host": "desktop",
+          "trigger": "remote-reboot", "active_runs": 0,
+          "affected_jobs": 0, "uncheckpointed": 0}]
+      and res["hold"] is True
+      and res["capture"] == [{"argv": ["send", "--cmd", BC_BODY_60]}]
+      and "REBOOT SIGNALED host=desktop route=backchannel"
+      in res["stdout"],
+      json.dumps({k: res[k] for k in ("rc", "order", "capture", "hold")}))
+
+# 7C: backchannel acceptance under --force — the run-id-named job
+# is annotated by the shared ingest; the run-less submitted job
+# is counted uncheckpointed but not annotated; --delay lands.
+c1 = job("c1", "quick", "dispatched", 1, sha="C1S",
+         run_status="in_progress")
+c1["run_id"] = 888
+c2 = job("c2", "normal", "submitted", 2, sha="C2S")
+res = run_reboot_case([c1, c2], "fresh", "offline", force=True, delay=45)
+check("reboot forced: annotations + counts + delay pinned",
+      res["rc"] == 0
+      and res["order"] == ["host_going_down", "interrupted",
+                           "host_reboot_requested", "SIGNAL"]
+      and res["annotations"]["c1"]["interrupted_by"] == "host-shutdown"
+      and res["annotations"]["c1"]["interrupted_host"] == "desktop"
+      and res["annotations"]["c2"]["interrupted_by"] is None
+      and res["gd_events"] == [{
+          "event": "host_going_down", "host": "desktop",
+          "trigger": "remote-reboot", "active_runs": 1,
+          "affected_jobs": 1, "uncheckpointed": 2}]
+      and res["capture"] == [{"argv": [
+          "send", "--cmd",
+          '/mnt/c/Windows/System32/shutdown.exe /r /t 45 '
+          '/c "Syncyard gatekeeper reboot"']}],
+      json.dumps({k: res[k] for k in ("rc", "order", "gd_events")}))
+
+# 7D: maintenance acceptance — stale heartbeat, one runner online,
+# one normal job active (forced). A maintenance signal job is
+# created; in dispatch_pass it alone is decided under the hold.
+n1 = job("n1", "normal", "submitted", 1, sha="N1S")
+res = run_reboot_case([n1], "stale", "online", force=True)
+rj = res["reboot_jobs"][0] if res["reboot_jobs"] else {}
+check("reboot maintenance: job created, hold-exempt in dispatch",
+      res["rc"] == 0
+      and res["requested_events"] == [{
+          "event": "host_reboot_requested", "host": "desktop",
+          "requested_by": "chat-test", "route": "maintenance",
+          "delay_s": 60}]
+      and len(res["reboot_jobs"]) == 1
+      and rj.get("workflow") == "run.yml" and rj.get("lane") == "quick"
+      and rj.get("state") == "submitted"
+      and rj.get("maintenance") is True
+      and res["signal_script"] == (
+          'shutdown.exe /r /t 60 /c "Syncyard gatekeeper reboot"; exit 0\n')
+      and res["hold"] is True
+      and res["decided"] == [rj.get("id")]
+      and "REBOOT SIGNAL QUEUED host=desktop route=maintenance"
+      in res["stdout"],
+      json.dumps({k: res[k] for k in ("rc", "reboot_jobs", "decided")}))
+
+# 7E: unreachable — stale heartbeat, no runner online. Exit 4 and
+# the ledger gains exactly the unreachable line: no going-down
+# record, no hold, no job, no signal.
+res = run_reboot_case([], "stale", "offline")
+check("reboot unreachable: exit 4, ledger-only footprint",
+      res["rc"] == 4
+      and res["stdout"] == "REBOOT UNREACHABLE host=desktop\n"
+      and res["events"] == ["host_reboot_unreachable"]
+      and res["capture"] == [] and res["hold"] is None
+      and res["reboot_jobs"] == [],
+      json.dumps({k: res[k] for k in ("rc", "events", "capture", "hold")}))
 
 print()
 if fails:

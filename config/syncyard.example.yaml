@@ -56,6 +56,15 @@ markers:
 liveness:
   down_after_s: 900
 
+# Controlled reboot (spec 011 FR-015). `gk reboot --host <host>`
+# signals the host OS with this grace delay in seconds unless
+# --delay overrides it, so in-flight uploads and log writes
+# finish before the host goes down. The going-down record is
+# always written before the signal. Failure mode: a
+# non-positive or non-numeric value fails closed at load.
+reboot:
+  grace_s: 60
+
 # Hosts. Each host names its type, the transport workflows it
 # serves (execute = run a script, grab = return a file), the
 # identity markers its venues prove themselves with, and its

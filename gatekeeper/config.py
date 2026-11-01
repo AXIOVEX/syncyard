@@ -25,6 +25,7 @@ Validation (load time, all named errors):
   - budget critical < standdown
   - transport ceiling positive
   - liveness threshold (spec 011 FR-001) a positive number
+  - reboot grace (spec 011 FR-015) a positive number
 """
 import os
 import re
@@ -61,6 +62,11 @@ DEFAULTS = {
     # last-seen record; a host whose heartbeat is older than this
     # many seconds is shown DOWN.
     "liveness": {"down_after_s": 900},
+    # Controlled reboot (spec 011 FR-015): `gk reboot` signals
+    # the host OS with this grace delay in seconds unless
+    # --delay overrides it, so in-flight uploads and log
+    # writes finish before the host goes down.
+    "reboot": {"grace_s": 60},
     "hosts": {
         "desktop": {
             "type": "windows",
@@ -298,6 +304,12 @@ def validate(cfg):
             or down_after <= 0):
         raise ConfigError(
             "liveness.down_after_s must be a positive number of seconds")
+    grace = (cfg.get("reboot") or {}).get("grace_s")
+    if (isinstance(grace, bool)
+            or not isinstance(grace, (int, float))
+            or grace <= 0):
+        raise ConfigError(
+            "reboot.grace_s must be a positive number of seconds")
     hosts = cfg.get("hosts") or {}
     declared = cfg.get("workflows") or []
     served = set()

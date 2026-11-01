@@ -59,6 +59,8 @@ check("golden marker pattern",
       cfg["markers"]["pattern"] == r"^[A-Z][A-Z0-9_]{2,}([ :]|$)")
 check("golden liveness threshold (spec 011 FR-001)",
       cfg["liveness"]["down_after_s"] == 900)
+check("golden reboot grace (spec 011 FR-015)",
+      cfg["reboot"]["grace_s"] == 60)
 check("golden log cap", cfg["retention"]["human_log_max_bytes"] == 1000000)
 check("golden cwd windows", cfg["hosts"]["desktop"]["cwd"]["run.yml"] == r"C:\Users\trist")
 check("golden cwd grab null", cfg["hosts"]["desktop"]["cwd"]["grab.yml"] is None)
@@ -90,7 +92,8 @@ dflt = cfgmod.load_config(None)
 check("defaults == example fleet surface",
       dflt["lanes"] == cfg["lanes"] and dflt["hosts"] == cfg["hosts"]
       and dflt["budget"] == cfg["budget"] and dflt["workflows"] == cfg["workflows"]
-      and dflt["liveness"] == cfg["liveness"])
+      and dflt["liveness"] == cfg["liveness"]
+      and dflt["reboot"] == cfg["reboot"])
 
 # 4: partial override merges.
 with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -136,6 +139,14 @@ expect_error("reject non-numeric liveness threshold",
              "liveness:\n  down_after_s: soon\n")
 expect_error("reject boolean liveness threshold",
              "liveness:\n  down_after_s: true\n")
+expect_error("reject zero reboot grace",
+             "reboot:\n  grace_s: 0\n")
+expect_error("reject negative reboot grace",
+             "reboot:\n  grace_s: -30\n")
+expect_error("reject non-numeric reboot grace",
+             "reboot:\n  grace_s: soon\n")
+expect_error("reject boolean reboot grace",
+             "reboot:\n  grace_s: true\n")
 
 # 6: a valid liveness override loads and lands.
 with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -144,6 +155,14 @@ with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
 over = cfgmod.load_config(path)
 os.unlink(path)
 check("liveness override loads", over["liveness"]["down_after_s"] == 120)
+
+# 7: a valid reboot grace override loads and lands.
+with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+    f.write("reboot:\n  grace_s: 120\n")
+    path = f.name
+over = cfgmod.load_config(path)
+os.unlink(path)
+check("reboot grace override loads", over["reboot"]["grace_s"] == 120)
 
 print()
 if fails:

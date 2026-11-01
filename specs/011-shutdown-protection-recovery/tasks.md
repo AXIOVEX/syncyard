@@ -145,7 +145,7 @@ behavior (spec 011 FR-014).
       T013, campaign relaunch per T009, handshake to the
       gatekeeper; dispatch stays held until the handshake.
       Test: a withheld handshake leaves the host DOWN.
-- [ ] T021 `gk reboot` (FR-015, Amendment 1): drain-aware
+- [x] T021 `gk reboot` (FR-015, Amendment 1): drain-aware
       refusal naming active jobs, going-down record written
       before any signal (trigger `remote-reboot`),
       `host_reboot_requested` ledger event naming the
@@ -163,6 +163,63 @@ behavior (spec 011 FR-014).
       Counted as a drill under FR-013; the evidence pack
       (runners API state, heartbeat age, job completions)
       lands with the change.
+
+## Phase 5 progress
+- [x] T021 (gatekeeper side, 2026-11-01): `gk reboot --host
+      <host> [--force] [--delay <seconds>] [--requested-by
+      <chat-id>]`. Route determination is reads-only and
+      happens first: a fresh backchannel heartbeat (age
+      <= 300 s, from the one shared reader
+      `fetch_backchannel_heartbeat`) that proves the host
+      selects the backchannel route; otherwise any online
+      runner of the door repo selects the maintenance route
+      (runner names are not in config — any online runner
+      proves the lane-owning host, and only that host may
+      take the route); otherwise the command prints
+      `REBOOT UNREACHABLE`, ledgers `host_reboot_unreachable`,
+      exits 4, and writes nothing else. With jobs in
+      submitted / dispatching / dispatched on the host's
+      lanes and no --force it prints the refusal naming the
+      job ids, ledgers `host_reboot_refused`, and exits 3 —
+      no record, no signal. On acceptance it builds the
+      FR-003 going-down record (trigger `remote-reboot`;
+      `remote-reboot` joins the ingest's trigger vocabulary)
+      and passes it through the existing `ingest_going_down`,
+      so the `host_going_down` ledger line, the
+      `interrupted_by` annotations, the dispatch hold, and
+      the outbox pushes are Phase 1 semantics exactly; the
+      record's `uncheckpointed` carries the active job ids
+      (the ingest ledgers their count). It then ledgers
+      `host_reboot_requested` (host, requested_by, route,
+      delay_s) and only then signals: backchannel route =
+      `bc.py send --cmd` with the Windows shutdown.exe
+      invoked through its /mnt/c path from the host's WSL2
+      distro (`/r /t <delay>`, delay defaulting to the new
+      config `reboot.grace_s` = 60, validated positive,
+      fail closed, mirrored in the example config and the
+      config battery); maintenance route = a normal
+      maintenance job through the existing submit machinery
+      (run.yml, the host's first configured lane, key
+      `gk-reboot-<host>-<ts>`, PowerShell shutdown with the
+      same delay) that the next sweep dispatches. One
+      reconciliation the implementation had to make, named:
+      the FR-006 hold blocks every lane of a going-down
+      host, maintenance included, so the signal job is
+      exempt from the hold in `dispatch_pass` by its
+      maintenance flag + key prefix — it is the going-down
+      mechanism, not new work on the host; all other jobs
+      stay held, and golden scenario 7 pins the exemption
+      alongside the refusal, the record-before-signal
+      order, both routes, and the unreachable path. A live
+      route whose signal itself fails exits 1 with a
+      `host_reboot_signal_failed` ledger line (the record
+      and hold stand; the failure is stated, never silent).
+      Named gaps: (1) the fleet deploy of this verb rides
+      the normal gatekeeper deploy discipline (pause-first,
+      queue snapshot, hash verify, one clean sweep) and has
+      not happened in this change; (2) the live fire drill
+      is T022, still open — nothing here has rebooted a
+      real host yet.
 
 ## Phase 6 — Reconciliation and the recovery report (FR-011, FR-012)
 - [ ] T015 Sweep reconciliation of interrupted runs: adopt
